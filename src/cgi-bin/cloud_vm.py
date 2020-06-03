@@ -6,6 +6,14 @@
 # Installation
 # ============
 #
+#
+# Usage:
+#   either from an HTML form providing configuration
+# OR
+#   as a script from the command line
+#     python3 cloud_vm.py --service ~/desktop --machines ~/desktop/machines/ \
+#       --snapshots /tmp --novnc ~/desktop/novnc/
+#
 # Steps
 # =====
 # - service configuration block (life-time, limits)
@@ -31,6 +39,8 @@ import pickle
 import tempfile
 import shutil
 import atexit
+import sys
+import argparse
 
 # Process management and info on the system
 import psutil
@@ -47,6 +57,7 @@ import cgi, cgitb
 #                            The MAIN is at the end
 #
 #                      Configure 'session_get_config' below !
+#             You can also configure the behaviour from input arguments
 #
 #                 All called functions are in the calling order.
 # ==============================================================================
@@ -77,16 +88,16 @@ def service_get_config():
   c['novnc']                    = os.path.join(c['service'], "novnc")
 
   # life time in [s]. Kill instance when above. One day is 86400.
-  c['snapshot_lifetime']        = 86400 
+  c['snapshot_lifetime']        = 86400.0
 
   # default nb of CPU per instance.
   c['snapshot_alloc_cpu']       = 1
 
   # default nb of RAM per instance (in MB).
-  c['snapshot_alloc_mem']       = 4096
+  c['snapshot_alloc_mem']       = 4096.0
 
   # default size of disk per instance (in GB). Only for ISO machines.
-  c['snapshot_alloc_disk']      = 10
+  c['snapshot_alloc_disk']      = 10.0
   
   # default machine to run
   c['machine']                  = 'dsl.iso'
@@ -101,7 +112,7 @@ def service_get_config():
   c['service_max_load']         = 0.8   
 
   # max number of active sessions. Deny service when above.
-  c['service_max_instance_nb']  = 10    
+  c['service_max_instance_nb']  = 10  
 
   # allow re-entrant sessions. Safer with single-shot, but limited in use.
   c['service_allow_persistent'] = False  
@@ -120,7 +131,7 @@ def service_get_config():
   
   # the name of the SMTP server, and optional port. None will disable.
   c['smtp_server']              = "smtp.synchrotron-soleil.fr"
-  c['smtp_port']                = "" # can be e.g. 465, 587, or left blank
+  c['smtp_port']                = 0 # can be e.g. 465, 587, or 0 (None)
   # the email address of the sender of the messages on the SMTP server. 
   #   None will disable
   c['email_from']               = "luke.skywalker@synchrotron-soleil.eu"
@@ -142,6 +153,55 @@ def service_get_config():
   # available disk must be > c['snapshot_alloc_disk']*1024**3
   c['disk_avail']               = psutil.disk_usage(c['service']).free
   
+  return c # config
+  
+  # end: service_get_config
+
+# ------------------------------------------------------------------------------  
+
+def service_get_argv(c, argv):
+  """Parse input arguments and overload the default configuration
+  This is useful when not running as a CGI.
+  """
+  
+  ap = argparse.ArgumentParser()
+  
+  # string options
+  opt = ['service','machines','snapshots','novnc','smtp_server','email_from', \
+    'machine','qemu_exec']
+  for o in opt:
+    ap.add_argument("--"+o, help=o+" ("+c[o]+")", nargs='?', default=c[o], type=str)
+  
+  # float options
+  opt = ['snapshot_alloc_mem', 'snapshot_alloc_disk', 'service_max_load']
+  for o in opt:
+    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=float)
+    
+  # integer options
+  opt = ['snapshot_alloc_cpu', 'snapshot_lifetime', \
+         'smtp_port',          'service_max_instance_nb'] 
+  for o in opt:
+    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=int)
+  
+  # boolean options  
+  opt = ['service_allow_persistent','service_allow_anonymous', \
+    'service_allow_emailed','service_allow_ldap', \
+    'service_use_vnc_token']
+  for o in opt:
+    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=bool)
+  
+  # Parse and transfer provided arguments into the configuration
+  args = vars(ap.parse_args())
+  for k in args:
+    if k in c:
+      c[k] = args[k]
+
+  
+# ------------------------------------------------------------------------------
+
+def service_check(c):
+  """Check if the service is properly configured."""
+
   # Check for service availability (dir, files, machine load)
   if not os.path.isdir(c['service']):
     raise FileNotFoundError('Invalid Service directory: %s' % c['service'])
@@ -158,6 +218,9 @@ def service_get_config():
   if not os.path.exists(os.path.join(c['novnc'],"utils","websockify","run")):
      raise FileNotFoundError('Can not find noVNC executable: %s' \
        % os.path.join(c['novnc'],"utils","websockify","run"))
+       
+  if not shutil.which(c['qemu_exec']):
+    raise FileNotFoundError('Can not find executable: %s' % c['qemu_exec'])
   
   if c['cpu_load'] > c['service_max_load']:
     raise OverflowError('Host load is already too high: %f' % c['cpu_load'])
@@ -165,12 +228,8 @@ def service_get_config():
   # logging
   print("[%s] Current configuration:" % time.asctime(time.localtime()))
   print(*c.items(), sep='\n')
-  
-  return c # config
-  
-  # end: service_get_config
 
-# ------------------------------------------------------------------------------  
+# ------------------------------------------------------------------------------
 
 def service_housekeeping(c):
   """ We look for all registered instances. 
@@ -246,15 +305,16 @@ def session_init(c):
   s['session_start'] = time.asctime(time.localtime())
   
   # Get values from the FORM
-  use_form = False
-  if use_form:
-    # Create instance of FieldStorage to get variables from the FORM
-    #   each named field is retrieved with form.getvalue('name')
-    form = cgi.FieldStorage() 
+  # Create instance of FieldStorage to get variables from the FORM
+  #   each named field is retrieved with form.getvalue('name')
+  form = cgi.FieldStorage() 
+  if len(form.keys()):  # there are keys to read
     s['machine']                  = form.getvalue('machine')
     s['snapshot_alloc_cpu']       = form.getvalue('cpu')
     s['snapshot_alloc_mem']       = form.getvalue('memory')
     s['snapshot_alloc_disk']      = form.getvalue('disk') # only for ISO
+  else:
+    print("[%s] Running as a script." % s['session_start'])
     
   try:
     s['remote_host'] = cgi.escape(os.environ["REMOTE_ADDR"])
@@ -298,7 +358,7 @@ def session_init(c):
 
   # Perform checks
   if not os.path.exists(os.path.join(c['machines'], s['machine'])):
-    raise FileNotFoundError('Virtual Machine does not exist.')
+    raise FileNotFoundError('Virtual Machine %s does not exist.' % s['machine'])
   
   # available cpu must be > c['snapshot_alloc_cpu']
   if c['cpu_avail'] < s['snapshot_alloc_cpu']:
@@ -306,7 +366,7 @@ def session_init(c):
   
   # available memory must be > c['snapshot_alloc_mem']*1024**2
   if c['mem_avail'] < s['snapshot_alloc_mem']*(1024**2):
-    raise OverflowError('Not enough free memory to run.')
+    raise OverflowError('Not enough free memory to run: %f' % c['mem_avail'])
   
   # available disk must be > c['snapshot_alloc_disk']*1024**3
   if c['disk_avail'] < s['snapshot_alloc_disk']*(1024**3):
@@ -584,6 +644,13 @@ if __name__ == "__main__":
   
   # Get service configuration
   config = service_get_config()
+  
+  # Handle input arguments, when used as a script
+  # this allows to tune the configuration from command line
+  service_get_argv(config, sys.argv)
+  
+  # check that all is operational
+  service_check(config)
   
   # House-keeping: clean-up outdated sessions
   service_housekeeping(config)
