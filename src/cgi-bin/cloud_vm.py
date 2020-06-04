@@ -416,23 +416,15 @@ def session_check_credentials(c, s):
   # |----------------|----------------------|-----------------|------------|
   # | anonymous      | displayed            |  very low       | No         |
   # | email          | displayed or emailed |  low            | allowed    |
-  # | github         | displayed or emailed |  medium         | allowed    |
   # | host (PAM)     | displayed            |  high           | allowed    |
   # | domain (LDAP)  | displayed or emailed |  highest        | allowed    |
   # |----------------|----------------------|-----------------|------------|
   #
   # - 'anonymous':  will display token on the HTTP dynamic page.
+  #                 limited session lifetime/cpu/mem, not persistent.
   #
   # - 'email':      requires valid email. Token is sent to it.
-  #
-  # - 'github':
-  #   see https://requests.readthedocs.io/en/master/user/authentication/
-  #   WARNING: will be deprecated Nov 17th 2020. Brings warnings in emails.
-  #            now requires to generate a token at GitHub, and use it in place of 
-  #            user/pw.
-  #                 import requests
-  #                 r = requests.get('https://api.github.com/user', auth=('id', 'pw')
-  #                 r.text provides a JSON with email, etc...
+  #                 limited session lifetime/cpu/mem, not persistent.
   #
   # - host account: 
   #   see: https://pypi.org/project/python-pam/     deb: module python3-pampy

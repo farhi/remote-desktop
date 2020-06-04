@@ -1,0 +1,217 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+  <head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <title>GRADES: Remote Desktop</title>
+  </head>
+  <body>
+    <a href="http://www.synchrotron-soleil.fr" target="_top"><img
+          alt="SOLEIL" title="SOLEIL"
+          src="images/logo_soleil.png"
+          align="right" border="0" height="64"></a>
+          
+    <h1 class="csc-firstHeader" align="center"><i>Freshly Cooked Remote Desktop<br>
+      </i></h1>
+    <div align="center"><i>version 1.0</i><i> - June 2020 (c) SOLEIL</i>
+    </div>
+    <hr size="2" width="100%"> <br>
+    <i><img alt="virtualmachines" title="virtualmachines"
+        src="images/virtualmachines.png" align="right" height="128"
+        width="173">This page allows to select and launch a Virtual
+      machine in a Browser Window, with distant execution. This way, you
+      can access pre-installed systems with specific applications
+      matching scientific domains.</i><br>
+    <br>
+    <i> </i>
+    <table border="1" cellpadding="2" cellspacing="2" width="100%">
+      <tbody>
+        <tr>
+          <td bgcolor="#ffcc99" valign="top"><b>INPUT: VirtualBox
+              machine</b><b><br>
+            </b></td>
+          <td bgcolor="#ffcc99" valign="top"><b>OUTPUT</b><b><br>
+            </b></td>
+        </tr>
+        <tr>
+          <td valign="top">Select the machine you need<b><br>
+            </b></td>
+          <td valign="top">A browser showing the distant machine
+            display.<br>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <br>
+    <form action="/cgi-bin/cloud_vm.py" method="post"
+      enctype="multipart/form-data">
+      <!-- Virtual machine choice -->
+      <p align="left"> </p>
+      <table border="0" cellpadding="2" cellspacing="2" width="100%">
+        <tbody>
+          <tr>
+            <td valign="top"><img alt="system" title="system"
+                src="images/logo-system.png" height="126" width="128"><br>
+            </td>
+            <td valign="top"><font color="#3366ff"><b>1- Indicate the
+                  machine you need:</b></font>
+              <select name="machine">
+                <option value="dsl.iso">Damn Small Linux</option>
+              </select>
+              <ul>
+                <li><b>Damn Small Linux:</b> An <i>incredibly</i> small
+                  linux distribution from <a
+                    href="http://www.damnsmalllinux.org/">DSL</a> (4.4).</li>
+              </ul>
+            </td>
+          </tr>
+          <tr>
+            <td valign="top"><img alt="persistent" title="persistent"
+                src="images/logo-save.png" height="124" width="128"><br>
+            </td>
+            <td valign="top">
+              <p align="left"> <font color="#3366ff"><b>2- Indicate if
+                    you need a persistent session</b></font>
+                <select name="persistent">
+                  <option value="no">Not persistent (single-shot login)</option>
+                  <option value="yes">Persistent (until you shutdown the
+                    VM)</option>
+                </select>
+              </p>
+              <ul>
+                <li>A <b>non persistent</b> session is cleaned when you
+                  either shutdown the virtual machine, or close the
+                  browser tab.</li>
+                <li>A <b>persistent</b> session keeps running until you
+                  fully shutdown the virtual machine. You may close the
+                  browser, and login again later using the same ID token
+                  sent by email. Persistent sessions may be required for
+                  e.g. long calculations.</li>
+              </ul>
+            </td>
+          </tr>
+          <tr>
+            <td valign="top"><img alt="email" title="email"
+                src="images/logo-email.png" height="113" width="128"><br>
+            </td>
+            <td valign="top">
+              <p align="left"><br>
+              </p>
+              <font color="#3366ff"><b>3- Indicate your user ID/email address:</b></font>
+              <input name="user" type="text"> <br>
+              <b>Required</b>, to get the connection information. 
+              Use <i>user</i> (for local account) or <i>user@domain.name</i>. 
+              If you do not have a local account on our authentication system,
+              you will be restricted to limited, non-persistent sessions, 
+              and should choose sessions without login (e.g. ISO).
+              </td>
+          </tr>
+          <tr>
+            <td valign="top"><br>
+            </td>
+            <td valign="top">
+              <p align="left"><br>
+              </p>
+              <font color="#3366ff"><b>4- Indicate your password:</b></font>
+              <input name="password" type="text"> <br>
+              Required for local credential check (account/LDAP). 
+              Not needed when using an external email account.
+          </tr>
+          <tr>
+            <td valign="top"><br>
+            </td>
+            <td valign="top">
+              <p align="left"><br>
+              </p>
+              <font color="#3366ff"><b>5- Number of CPUs:</b></font>
+              <select name="cpu">
+                <option value="1">1</option>
+                <option value="2">2</option>
+              </select>
+              This is the number of CPU you need.
+          </tr>
+          <tr>
+            <td valign="top"><br>
+            </td>
+            <td valign="top">
+              <p align="left"><br>
+              </p>
+              <font color="#3366ff"><b>6- Memory:</b></font>
+              <select name="memory">
+                <option value="1">1 GB</option>
+                <option value="2">2 GB</option>
+                <option value="4">4 GB</option>
+              </select>
+              This is the amount of memory you need (in GB).
+          </tr>
+        </tbody>
+      </table>
+      <br>
+      <p align="center"> <b><input value="LAUNCH !" type="SUBMIT"></b>
+      </p>
+    </form>
+    A virtual machine will be created, with assigned resources. 
+    You will receive an email with the connection directives. 
+    A browser window will be opened. Use the
+    given ID token to connect to the VNC. With persistent machines, you
+    may as well share the connection information to allow your friends
+    to contribute/see your work. <br>
+    <br>
+    We recommend that you adapt the <b>screen resolution</b> of the
+    virtual machine using the bottom-left menu <i>Preferences/Monitor
+      Settings</i>. and the <b>keyboard layout</b> from the <i>Preferences</i>
+    as well.<br>
+    <hr size="2" width="100%">
+    <h2>Availability and Credits</h2>
+    If you use this software, please acknowledge
+    <ul>
+      <li>E. Farhi, Synchrotron Soleil (2020).<br>
+      </li>
+    </ul>
+    <h2>Limitations</h2>
+    The virtual machines are made secure by inactivating some of their
+    functionalities. Remember that the virtual machine is created on
+    request, and destroyed afterwards. You should then<b> export
+      elsewhere any work</b> done there-in (e.g. mounted disk, ssh/sftp,
+    DropBox, ownCloud, ...). The virtual machine is destroyed when you
+    logout, or when its time-out is reached.<br>
+    <br>
+    We recommend to use the <a href="https://www.mozilla.org">Firefox</a>
+    web browser to display the virtual machine. <a
+      href="https://www.google.com/chrome/">Google Chrome</a> is also
+    OK. Other web browsers may show an offset between two mouse pointers
+    (local and distant).<br>
+    <br>
+    This is an experimental service, and as such, it may be restarted
+    for updates. We shall inform, as much as possible, logged users
+    about any service interruption.
+    <h2>How it works</h2>
+    A virtual machine is cloned from a template. It is then started with
+    <a href="https://www.qemu.org/">QEMU</a>/<a
+      href="https://www.linux-kvm.org/page/Main_Page">KVM</a>. A message
+    is sent to your email address with a link and a connection token,
+    which is one-shot for non-persistent sessions. A VNC client (<a
+      href="https://github.com/novnc/noVNC">noVNC</a>) is connected to
+    it, and shown in your browser. All the available virtual machines
+    are <a href="machines">stored</a> on our Apache server (ISO and
+    QCOW2 files).<br>
+    <br>
+  <hr>
+  <small><small><b><i>Disclaimer: </i></b>This SOFTWARE PRODUCT is
+        provided by THE PROVIDER "as is" and "with all faults." THE
+        PROVIDER makes no representations or warranties of any kind
+        concerning the safety, suitability, lack of viruses,
+        inaccuracies, typographical errors, or other harmful components
+        of this SOFTWARE PRODUCT. There are inherent dangers in the use
+        of any software, and you are solely responsible for determining
+        whether this SOFTWARE PRODUCT is compatible with your equipment
+        and other software installed on your equipment. You are also
+        solely responsible for the protection of your equipment and
+        backup of your data, and THE PROVIDER will not be liable for any
+        damages you may suffer in connection with using, modifying, or
+        distributing this SOFTWARE PRODUCT.
+        <br>
+      </small></small><small><small>(c) <a
+          href="http://www.synchrotron-soleil.fr" target="_top">SOLEIL</a>
+        2020- <a href="mailto:emmanuel.farhi@synchrotron-soleil.fr">Emmanuel Farhi</a></small></small>.  
+  </body>
+</html>
