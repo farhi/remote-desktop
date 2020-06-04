@@ -82,17 +82,18 @@ def service_get_config():
   c = {}; # we store all in a Dict (config)
   
   # base directory were all resides
-  c['service']                  = "/var/www/html/desktop/"
+  c['www']                      = "/var/www/html" # root HTML location
+  c['service']                  = "/desktop"      # location visible from browser
 
   # where to store ISO, QCOW2, VMDK and VDI files.
-  c['machines']                 = os.path.join(c['service'], "machines")
+  c['machines']                 = os.path.join(c['www'],c['service'], "machines")
 
   # where to create snapshots from above VM's.
-  # can be /tmp or /dev/shm or os.path.join(c['service'], "snapshots")
-  c['snapshots']                = tempfile.gettempdir()
+  # can be tempfile.gettempdir() or os.path.join(c['service'], "snapshots")
+  c['snapshots']                = os.path.join(c['www'],c['service'], "snapshots")
 
   # where is noVNC ? Can run with Python3 OK.
-  c['novnc']                    = os.path.join(c['service'], "novnc")
+  c['novnc']                    = os.path.join(c['www'],c['service'], "novnc")
 
   # life time in [s]. Kill instance when above. One day is 86400.
   c['snapshot_lifetime']        = 86400.0
@@ -158,7 +159,7 @@ def service_get_config():
   c['mem_avail']                = psutil.virtual_memory().available
   
   # available disk must be > c['snapshot_alloc_disk']*1024**3
-  c['disk_avail']               = psutil.disk_usage(c['service']).free
+  c['disk_avail']               = psutil.disk_usage(c['www']).free
   
   return c # config
   
@@ -218,8 +219,8 @@ def service_check(c):
   """Check if the service is properly configured."""
 
   # Check for service availability (dir, files, machine load)
-  if not os.path.isdir(c['service']):
-    raise FileNotFoundError('Invalid Service directory: %s' % c['service'])
+  if not os.path.isdir(os.path.join(c['www'],c['service'])):
+    raise FileNotFoundError('Invalid Service directory: %s' % os.path.join(c['www'],c['service']))
   
   if not os.path.isdir(c['machines']):
     raise FileNotFoundError('Invalid Machines directory: %s' % c['machines'])
@@ -338,9 +339,7 @@ def session_init(c):
     s['remote_host'] = cgi.escape(os.environ["REMOTE_ADDR"])
     if s['remote_host'] == "::1":
       s['remote_host'] = "127.0.0.1"
-    
-    
-    
+
   else:
     print("[%s] Running as a script on %s" % (s['session_start'],s['remote_host']))
     s['running_cgi']              = False
@@ -395,6 +394,29 @@ def session_init(c):
     
   if not c['service_allow_persistent']:
     s['snapshot_persistent'] = False
+    
+  # store URL's to access the service
+  s['url1'] = "http://%s:%i/vnc.html?host=%s&port=%s" \
+    % (c['hostname'],s['novnc_port'], c['hostname'],s['novnc_port'])
+  s['url2'] = "http://%s:%s/vnc.html?host=%s&port=%s" \
+    % (s['remote_host'], s['novnc_port'], s['remote_host'], s['novnc_port'])
+    
+  # full path to instance directory
+  s['snapshot_dir'] = \
+      os.path.join(c['snapshots'], s['snapshot_name'])
+      
+  os.mkdir(s['snapshot_dir']) # raise FileExistsError when already there.
+  
+  # we assemble an HTML file to redirect to.
+  s['snapshot_html_file'] = os.path.join(c['snapshots'], s['snapshot_name'],"index.html")
+  with open(s['snapshot_html_file'], "w") as f:
+    f.write("<html><head><title>AAA</title></head>\n")
+    f.write("<body>\n")
+    f.write("<h1>URL1:  %s</h1>\n" % s['url1']) 
+    f.write("<h1>URL2:  %s</h1>\n" % s['url2']) 
+    if 'vnc_token' in s:
+      f.write("<h1>Token: %s</h1>\n" % s['vnc_token'])
+    f.write("</body></html>\n")
 
   # logging
   if not s['running_cgi']:
@@ -402,6 +424,33 @@ def session_init(c):
       % (s['session_start'],s['snapshot_name'], s['machine']))
     print("[%s] Host VNC/websocket http://%s:%i" \
       % (s['session_start'],s['qemuvnc_ip'],    s['novnc_port']) )
+    print(" ")
+    print("[%s] Current session: persistent=%s" \
+      % (time.asctime(time.localtime()),str(s['snapshot_persistent'])))
+    print(*s.items(), sep='\n')
+    print(" ")
+    print("[%s] Machine %s started in %s" \
+      % (s['session_start'],s['machine'],s['snapshot_dir']))
+    print("  URL:   %s" % s['url1'])
+    print("  URL:   %s" % s['url2'])
+    if 'vnc_token' in s:
+      print("  Token: %s" %s['vnc_token'])
+      
+  else:
+    time.sleep(5)
+    print("Location: %s\n" % os.path.join(s['service'],'snapshots',s['snapshot_name'],"index.html")) # must be accessible via browser
+#    print('Content-Type: text/html')
+#    print('Location: %s' % redirectURL)
+#    print("")# HTTP says you have to have a blank line between headers and content
+#    print('<html>')
+#    print('  <head>')
+#    print('    <meta http-equiv="refresh" content="0;url=%s" />' % redirectURL)
+#    print('    <title>You are going to be redirected</title>')
+#    print('  </head>' )
+#    print('  <body>')
+#    print('    Redirecting... <a href="%s">Click here if you are not redirected</a>' % redirectURL)
+#    print('  </body>')
+#    print('</html>')
     
   return s # session
   
@@ -461,12 +510,6 @@ def session_create_snapshot(c, s):
   c : config Dict
   s : session Dict
   """
-
-  # full path to instance directory
-  s['snapshot_dir'] = \
-      os.path.join(c['snapshots'], s['snapshot_name'])
-      
-  os.mkdir(s['snapshot_dir']) # raise FileExistsError when already there.
       
   # full path to snapshot qemu file
   s['snapshot'] = \
@@ -576,15 +619,9 @@ def session_start_novnc(c, s):
     stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
   s['snapshot_novnc_pid'] = proc.pid # store the PID which can be pickled
   
-  # store URL's to access the service
-  s['url1'] = "http://%s:%i/vnc.html?host=%s&port=%s" \
-    % (c['hostname'],s['novnc_port'], c['hostname'],s['novnc_port'])
-  s['url2'] = "http://%s:%s/vnc.html?host=%s&port=%s" \
-    % (s['remote_host'], s['novnc_port'], s['remote_host'], s['novnc_port'])
-  
 # ------------------------------------------------------------------------------
 
-def session_display(s):
+def session_save(s):
   """Save session info. Send message to the user via email, and display it.
   
   Parameters
@@ -603,41 +640,10 @@ def session_display(s):
                 
   # make it a flat list
   s['pids'] = flatten(pids)
-  
-  # logging
-  if not s['running_cgi']:
-    print("[%s] Current session: persistent=%s" \
-      % (time.asctime(time.localtime()),str(s['snapshot_persistent'])))
-    print(*s.items(), sep='\n')
-  
+
   # save session
   with open(s['snapshot_pickle'],'wb') as f:
     pickle.dump(s,f)
-  
-  # - display 'result' message, send token via email or displayed
-  if not s['running_cgi']:
-    print(" ")
-    print("Machine %s started in %s" % (s['machine'],s['snapshot_dir']))
-    print("  URL:   %s" % s['url1'])
-    print("  URL:   %s" % s['url2'])
-    if 'vnc_token' in s:
-      print("  Token: %s" %s['vnc_token'])
-  else:
-    print("Content-type:text/html\r\n\r\n")
-    print('<html>')
-    print('<head>')
-    print('<title>Hello World - First CGI Program</title>')
-    print('</head>')
-    print('<body>')
-    print('<h2>Hello World! This is my first CGI program</h2>')
-    print("  URL:   %s" % s['url1'])
-    print("  URL:   %s" % s['url2'])
-    if 'vnc_token' in s:
-      print("  Token: %s" %s['vnc_token'])
-    print('</body>')
-    print('</html>')
-
-
 
 # ------------------------------------------------------------------------------
 
@@ -737,9 +743,8 @@ if __name__ == "__main__":
   # Launch noVNC (call 'novnc/utils/websockify/run')
   session_start_novnc(config, session) # this may block the browser (stalled)
 
-  # Send message to the user via email, and display it.
-  #   Save session info.
-  session_display(session)
+  # Save session info.
+  session_save(session)
   
   # Wait for noVNC (not persistent) or QEMU (persistent) to end
   session_wait(session)
