@@ -32,22 +32,25 @@
 # - https://www.tutorialspoint.com/python/python_cgi_programming.htm
 
 # Import basic stuff: OS to e.g. test for files, ...
-import os
-import time
-import glob
-import pickle
-import tempfile
-import shutil
-import atexit
-import sys
 import argparse
+import atexit
+import glob
+import os
+import pickle
+import shutil
+import sys
+import tempfile
+import time
 
 # Process management and info on the system
-import psutil
+import psutil         # deb: python3-psutil
 import signal
-import subprocess
 import shlex
 import socket  
+import subprocess
+
+# User authentication
+import pam            # deb: python3-pam
 
 # Import modules for CGI handling 
 import cgi, cgitb 
@@ -82,7 +85,8 @@ def service_get_config():
   c['machines']                 = os.path.join(c['service'], "machines")
 
   # where to create snapshots from above VM's.
-  c['snapshots']                = os.path.join(c['service'], "snapshots")
+  # can be /tmp or /dev/shm or os.path.join(c['service'], "snapshots")
+  c['snapshots']                = tempfile.gettempdir()
 
   # where is noVNC ? Can run with Python3 OK.
   c['novnc']                    = os.path.join(c['service'], "novnc")
@@ -166,27 +170,32 @@ def service_get_argv(c, argv):
   
   ap = argparse.ArgumentParser()
   
-  # string options
-  opt = ['service','machines','snapshots','novnc','smtp_server','email_from', \
-    'machine','qemu_exec']
+  # string/float/integer options
+  opt = ['service','machines','snapshots','novnc', \
+    'smtp_server', 'smtp_port', 'email_from', \
+    'service_max_load', 'service_max_instance_nb', \
+    'machine','qemu_exec', \
+    'snapshot_alloc_mem', 'snapshot_alloc_disk', \
+    'snapshot_alloc_cpu', 'snapshot_lifetime' ]
   for o in opt:
-    ap.add_argument("--"+o, help=o+" ("+c[o]+")", nargs='?', default=c[o], type=str)
+    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=type(c[o]))
   
-  # float options
-  opt = ['snapshot_alloc_mem', 'snapshot_alloc_disk', 'service_max_load']
-  for o in opt:
-    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=float)
-    
-  # integer options
-  opt = ['snapshot_alloc_cpu', 'snapshot_lifetime', \
-         'smtp_port',          'service_max_instance_nb'] 
-  for o in opt:
-    ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=int)
-  
-  # boolean options  
+  # boolean options 
+  # we use: https://stackoverflow.com/questions/402504/how-to-determine-a-python-variables-type 
   opt = ['service_allow_persistent','service_allow_anonymous', \
     'service_allow_emailed','service_allow_ldap', \
     'service_use_vnc_token']
+    
+  def str2bool(v):
+    if isinstance(v, bool):
+       return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+  
   for o in opt:
     ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=bool)
   
@@ -303,6 +312,9 @@ def session_init(c):
   s['snapshot_persistent']      = c['service_allow_persistent']
   
   s['session_start'] = time.asctime(time.localtime())
+  s['remote_host']   = "127.0.0.1" # we first assume we are running locally
+  # store environment variables (both for CGI and script use)
+  # s['env'] = os.environ.keys()
   
   # Get values from the FORM
   # Create instance of FieldStorage to get variables from the FORM
@@ -312,16 +324,17 @@ def session_init(c):
     s['machine']                  = form.getvalue('machine')
     s['snapshot_alloc_cpu']       = form.getvalue('cpu')
     s['snapshot_alloc_mem']       = form.getvalue('memory')
-    s['snapshot_alloc_disk']      = form.getvalue('disk') # only for ISO
-  else:
-    print("[%s] Running as a script." % s['session_start'])
+    s['snapshot_persistent']      = form.getvalue('persistent')
+    # s['snapshot_alloc_disk']      = form.getvalue('disk') # only for ISO
     
-  try:
     s['remote_host'] = cgi.escape(os.environ["REMOTE_ADDR"])
-  except:
-    s['remote_host'] = "127.0.0.1"
-  if s['remote_host'] == "::1":
-    s['remote_host'] = "127.0.0.1"
+    if s['remote_host'] == "::1":
+      s['remote_host'] = "127.0.0.1"
+    
+    print("[%s] Running as a CGI on %s" % (s['session_start'],s['remote_host']))
+    
+  else:
+    print("[%s] Running as a script on %s" % (s['session_start'],s['remote_host']))
 
   # Get a session index, used for VNC port/ip
   if len(c['used_index']):
@@ -342,7 +355,6 @@ def session_init(c):
   # set VNC IP and PORT
   s['qemuvnc_ip'] = "127.0.0.%i" % (s['snapshot_index']+1)
   # find a port which is not used. 1st is 6080 (noVNC)
-  s['novnc_port'] = None
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     for x in range(6080, 6080+c['service_max_instance_nb']):
       try:
@@ -378,8 +390,8 @@ def session_init(c):
   # logging
   print("[%s] Init session %s to run %s" \
     % (s['session_start'],s['snapshot_name'], s['machine']))
-  print("[%s] Index [%i] VNC %s:%i" \
-    % (s['session_start'],s['snapshot_index'],s['qemuvnc_ip'],s['novnc_port']) )
+  print("[%s] Host VNC/websocket http://%s:%i" \
+    % (s['session_start'],s['qemuvnc_ip'],    s['novnc_port']) )
     
   return s # session
   
@@ -397,14 +409,44 @@ def session_check_credentials(c, s):
   
   """
 
-  # user is 'anonymous': display the token in the 'result' page.
-
-  # user is identified with email: we shall send the token via email.
-
-  # user is registered via LDAP: we get its email, and shall send the token there.
+  # Potential authentication methods:
+  #
+  # |----------------|----------------------|-----------------|------------|
+  # | authentication |  token               |  Security level | Persistent |
+  # |----------------|----------------------|-----------------|------------|
+  # | anonymous      | displayed            |  very low       | No         |
+  # | email          | displayed or emailed |  low            | allowed    |
+  # | github         | displayed or emailed |  medium         | allowed    |
+  # | host (PAM)     | displayed            |  high           | allowed    |
+  # | domain (LDAP)  | displayed or emailed |  highest        | allowed    |
+  # |----------------|----------------------|-----------------|------------|
+  #
+  # - 'anonymous':  will display token on the HTTP dynamic page.
+  #
+  # - 'email':      requires valid email. Token is sent to it.
+  #
+  # - 'github':
+  #   see https://requests.readthedocs.io/en/master/user/authentication/
+  #   WARNING: will be deprecated Nov 17th 2020. Brings warnings in emails.
+  #            now requires to generate a token at GitHub, and use it in place of 
+  #            user/pw.
+  #                 import requests
+  #                 r = requests.get('https://api.github.com/user', auth=('id', 'pw')
+  #                 r.text provides a JSON with email, etc...
+  #
+  # - host account: 
+  #   see: https://pypi.org/project/python-pam/     deb: module python3-pampy
+  #                 import pam
+  #                 p=pam.pam()
+  #                 p.authenticate('user','pw') -> True/False
+  #
+  #                 can stop sessions, display history
+  #
+  # - LDAP
+  #   see: https://medium.com/@alpolishchuk/a-little-python-ldap-tutorial-4a6a79676157
+  #   see: https://ldap3.readthedocs.io/en/latest/tutorial_searches.html
+  #   see: https://stackoverflow.com/questions/58307805/python3-check-ldap-username-and-password-in-a-safe-way
   
-  # user if admin account: can stop sessions, display history
-
 # ------------------------------------------------------------------------------
 
 def session_create_snapshot(c, s):
@@ -554,13 +596,14 @@ def session_display(s):
   # make it a flat list
   s['pids'] = flatten(pids)
   
+  # logging
+  print("[%s] Current session: persistent=%s" \
+    % (time.asctime(time.localtime()),str(s['snapshot_persistent'])))
+  print(*s.items(), sep='\n')
+  
   # save session
   with open(s['snapshot_pickle'],'wb') as f:
     pickle.dump(s,f)
-  
-  # logging
-  print("[%s] Current session:" % time.asctime(time.localtime()))
-  print(*s.items(), sep='\n')
   
   # - display 'result' message, send token via email or displayed
   print("  URL:   %s" % s['url1'])
