@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # This is a CGI script to provide a remote desktop service.
 # 
 # Warning: this CGI must be called with the POST method, as emails/passwd
@@ -41,6 +43,7 @@ import shutil
 import sys
 import tempfile
 import time
+from datetime import datetime
 
 # Process management and info on the system
 import psutil         # deb: python3-psutil
@@ -161,7 +164,20 @@ def service_get_config():
   
   # end: service_get_config
 
-# ------------------------------------------------------------------------------  
+# ------------------------------------------------------------------------------ 
+
+def str2bool(v):
+  """Convert string to boolean value."""
+  if isinstance(v, bool):
+    return v
+  elif not isinstance(v, str):
+    raise ValueError('Boolean value expected. Got None.') 
+  if v.lower() in ('yes', 'true', 't', 'y', '1'):
+    return True
+  elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+    return False
+  else:
+    raise ValueError('Boolean value expected.') 
 
 def service_get_argv(c, argv):
   """Parse input arguments and overload the default configuration
@@ -185,16 +201,6 @@ def service_get_argv(c, argv):
   opt = ['service_allow_persistent','service_allow_anonymous', \
     'service_allow_emailed','service_allow_ldap', \
     'service_use_vnc_token']
-    
-  def str2bool(v):
-    if isinstance(v, bool):
-       return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
   
   for o in opt:
     ap.add_argument("--"+o, help=o+" ("+str(c[o])+")", nargs='?', default=c[o], type=bool)
@@ -233,10 +239,6 @@ def service_check(c):
   
   if c['cpu_load'] > c['service_max_load']:
     raise OverflowError('Host load is already too high: %f' % c['cpu_load'])
-    
-  # logging
-  print("[%s] Current configuration:" % time.asctime(time.localtime()))
-  print(*c.items(), sep='\n')
 
 # ------------------------------------------------------------------------------
 
@@ -260,8 +262,8 @@ def service_housekeeping(c):
   c['used_index'] = []
   
   for session_pkl in active:
-    date_modified =  os.path.getmtime(session_pkl)
-    now           = timktime(datetinow().timetuple())
+    date_modified = os.path.getmtime(session_pkl)
+    now           = time.mktime(datetime.now().timetuple())
     
     with open(session_pkl, "rb") as session_file:
       # when file is older than life time, stop session
@@ -314,27 +316,34 @@ def session_init(c):
   s['session_start'] = time.asctime(time.localtime())
   s['remote_host']   = "127.0.0.1" # we first assume we are running locally
   # store environment variables (both for CGI and script use)
-  # s['env'] = os.environ.keys()
+  s['env'] = dict(os.environ)
   
   # Get values from the FORM
   # Create instance of FieldStorage to get variables from the FORM
   #   each named field is retrieved with form.getvalue('name')
   form = cgi.FieldStorage() 
   if len(form.keys()):  # there are keys to read
+    s['running_cgi']              = True
+
     s['machine']                  = form.getvalue('machine')
-    s['snapshot_alloc_cpu']       = form.getvalue('cpu')
-    s['snapshot_alloc_mem']       = form.getvalue('memory')
-    s['snapshot_persistent']      = form.getvalue('persistent')
+    s['snapshot_alloc_cpu']       = int(form.getvalue('cpu'))
+    s['snapshot_alloc_mem']       = float(form.getvalue('memory'))
+    # s['snapshot_persistent']      = str2bool(form.getvalue('persistent'))
+    
+    s['snapshot_user']            = form.getvalue('user')
+    s['snapshot_password']        = form.getvalue('password')
+    # s['agree_on_terms']           = str2bool(form.getvalue('terms'))
     # s['snapshot_alloc_disk']      = form.getvalue('disk') # only for ISO
     
     s['remote_host'] = cgi.escape(os.environ["REMOTE_ADDR"])
     if s['remote_host'] == "::1":
       s['remote_host'] = "127.0.0.1"
     
-    print("[%s] Running as a CGI on %s" % (s['session_start'],s['remote_host']))
+    
     
   else:
     print("[%s] Running as a script on %s" % (s['session_start'],s['remote_host']))
+    s['running_cgi']              = False
 
   # Get a session index, used for VNC port/ip
   if len(c['used_index']):
@@ -388,10 +397,11 @@ def session_init(c):
     s['snapshot_persistent'] = False
 
   # logging
-  print("[%s] Init session %s to run %s" \
-    % (s['session_start'],s['snapshot_name'], s['machine']))
-  print("[%s] Host VNC/websocket http://%s:%i" \
-    % (s['session_start'],s['qemuvnc_ip'],    s['novnc_port']) )
+  if not s['running_cgi']:
+    print("[%s] Init session %s to run %s" \
+      % (s['session_start'],s['snapshot_name'], s['machine']))
+    print("[%s] Host VNC/websocket http://%s:%i" \
+      % (s['session_start'],s['qemuvnc_ip'],    s['novnc_port']) )
     
   return s # session
   
@@ -470,7 +480,9 @@ def session_create_snapshot(c, s):
     cmd = "qemu-img create -b %s -f qcow2 %s" \
       % (s['snapshot'], os.path.join(c['machines'], s['machine']))
   
-  os.system(cmd); # execute command. We could use subprocess.run instead.
+  # execute and wait for it to complete.
+  subprocess.run(shlex.split(cmd), \
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
   
   # check that the snapshot file now exists
   if not os.path.exists(s['snapshot']):
@@ -478,8 +490,9 @@ def session_create_snapshot(c, s):
       % s['snapshot'])
       
   # logging
-  print("[%s] Created snapshot %s from %s" \
-    % (s['session_start'],s['snapshot'], s['machine']))
+  if not s['running_cgi']:
+    print("[%s] Created snapshot %s from %s" \
+      % (s['session_start'],s['snapshot'], s['machine']))
   
 # ------------------------------------------------------------------------------
 
@@ -523,7 +536,7 @@ def session_start_snapshot(c, s):
     with open(s['snapshot_token_file'],"r") as stdin:
       # launch cmd in background. Must retrieve PIDs (as group)
       proc = subprocess.Popen(shlex.split(cmd), stdin=stdin, \
-          stdout=subprocess.DEVNULL)
+          stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
       s['snapshot_qemu_pid'] = proc.pid
       time.sleep(5)
       # auto close token file
@@ -533,7 +546,9 @@ def session_start_snapshot(c, s):
   
   else: 
     # launch cmd in background. Must retrieve PIDs (as group)
-    proc = subprocess.Popen(shlex.split(cmd))
+    proc = subprocess.Popen(shlex.split(cmd), \
+      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+      
     s['snapshot_qemu_pid'] = proc.pid # store the PID which can be pickled
     time.sleep(5)
     
@@ -557,7 +572,8 @@ def session_start_novnc(c, s):
     cmd += " --run-once"
 
   # launch cmd in background. Must retrieve PIDs (as group)
-  proc = subprocess.Popen(shlex.split(cmd))
+  proc = subprocess.Popen(shlex.split(cmd), \
+    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
   s['snapshot_novnc_pid'] = proc.pid # store the PID which can be pickled
   
   # store URL's to access the service
@@ -589,21 +605,40 @@ def session_display(s):
   s['pids'] = flatten(pids)
   
   # logging
-  print("[%s] Current session: persistent=%s" \
-    % (time.asctime(time.localtime()),str(s['snapshot_persistent'])))
-  print(*s.items(), sep='\n')
+  if not s['running_cgi']:
+    print("[%s] Current session: persistent=%s" \
+      % (time.asctime(time.localtime()),str(s['snapshot_persistent'])))
+    print(*s.items(), sep='\n')
   
   # save session
   with open(s['snapshot_pickle'],'wb') as f:
     pickle.dump(s,f)
   
   # - display 'result' message, send token via email or displayed
-  print("  URL:   %s" % s['url1'])
-  print("  URL:   %s" % s['url2'])
-  if 'vnc_token' in s:
-    print("  Token: %s" %s['vnc_token'])
-  
-  
+  if not s['running_cgi']:
+    print(" ")
+    print("Machine %s started in %s" % (s['machine'],s['snapshot_dir']))
+    print("  URL:   %s" % s['url1'])
+    print("  URL:   %s" % s['url2'])
+    if 'vnc_token' in s:
+      print("  Token: %s" %s['vnc_token'])
+  else:
+    print("Content-type:text/html\r\n\r\n")
+    print('<html>')
+    print('<head>')
+    print('<title>Hello World - First CGI Program</title>')
+    print('</head>')
+    print('<body>')
+    print('<h2>Hello World! This is my first CGI program</h2>')
+    print("  URL:   %s" % s['url1'])
+    print("  URL:   %s" % s['url2'])
+    if 'vnc_token' in s:
+      print("  Token: %s" %s['vnc_token'])
+    print('</body>')
+    print('</html>')
+
+
+
 # ------------------------------------------------------------------------------
 
 def session_wait(s):
@@ -642,18 +677,12 @@ def session_stop(s):
   """
   
   # logging
-  print("[%s] Exiting session %s running %s" \
-    % (s['session_start'],s['snapshot_name'], s['machine']))
     
   # remove file/dir (as we be kill ourselfves further)
   if 'snapshot_dir' in s and os.path.isdir(s['snapshot_dir']):
-      print("[%s] Delete %s" \
-        % (time.asctime(time.localtime()), s['snapshot_dir']))
       shutil.rmtree(s['snapshot_dir'], ignore_errors=True)
   
   if 'snapshot_pickle' in s and os.path.exists(s['snapshot_pickle']):
-      print("[%s] Delete %s" \
-        % (time.asctime(time.localtime()), s['snapshot_pickle']))
       os.unlink(s['snapshot_pickle'])
   
   # kill all child processes
@@ -662,8 +691,6 @@ def session_stop(s):
       for pid in s['pids']:
         # send signal when still active (but not ourselves)
         if psutil.pid_exists(pid) and pid != os.getpid():
-          print("[%s] Kill %i" \
-            % (time.asctime(time.localtime()), pid))
           os.killpg(os.getpgid(pid), sig)
           time.sleep(1)
 
@@ -683,7 +710,7 @@ if __name__ == "__main__":
   # Handle input arguments, when used as a script
   # this allows to tune the configuration from command line
   service_get_argv(config, sys.argv)
-  
+
   # check that all is operational
   service_check(config)
   
@@ -708,8 +735,8 @@ if __name__ == "__main__":
   session_start_snapshot(config, session)
   
   # Launch noVNC (call 'novnc/utils/websockify/run')
-  session_start_novnc(config, session)
-  
+  session_start_novnc(config, session) # this may block the browser (stalled)
+
   # Send message to the user via email, and display it.
   #   Save session info.
   session_display(session)
