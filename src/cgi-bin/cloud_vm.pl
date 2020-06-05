@@ -1,8 +1,10 @@
 #!/usr/bin/perl -w
 
 # requirements:
-#   sudo apt-get install apache2 libapache2-mod-perl2 libcgi-pm-perl ifit-phonons libsys-cpu-perl libsys-cpuload-perl libnet-dns-perl libproc-background-perl
-# sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq libproc-processtable-perl libemail-valid-perl
+# sudo apt install apache2 libapache2-mod-perl2
+# sudo apt install libcgi-pm-perl libsys-cpu-perl libsys-cpuload-perl 
+# sudo apt install libnet-dns-perl libproc-background-perl libproc-processtable-perl libemail-valid-perl
+# sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
 # sudo adduser www-data kvm
 # sudo chmod 755 /etc/qemu-ifup
 
@@ -36,70 +38,48 @@ my $smtp_port    = ""; # can be e.g. 465, 587, or left blank
 my $email_from   = "luke.skywalker\@synchrotron-soleil.fr";
 # the password for the sender on the SMTP server, or left blank
 my $email_passwd = "";
-my $vm_lifetime  = 600; # max VM life time in sec. 1 day is 86400 s. Use 0 to disable (infinite)
-my $video_qemu   = "qxl"; # can be "qxl" or "vmware"
+my $snapshot_lifetime  = 86400; # max VM life time in sec. 1 day is 86400 s. Use 0 to disable (infinite)
+my $qemu_video   = "qxl"; # can be "qxl" or "vmware"
 
 # ==============================================================================
 # DECLARE all our variables
 # ==============================================================================
 
-# CGI stuff --------------------------------------------------------------------
-$CGI::POST_MAX = 1024*5000; # max 5M upload
 
-my $q     = new CGI;    # create new CGI object
-my $error = "";
-
-# identification stuff ---------------------------------------------------------
-my @cpuload = Sys::CpuLoad::load();
-my $cpunb   = Sys::CPU::cpu_count();
-my $cpuload0= $cpuload[0];
-
-my $host         = hostname;
-my $fqdn         = hostfqdn();
-my $remote_host = $q->remote_host();
-my $server_name = $q->server_name();
-my $datestring  = localtime();
+my $error = "";               # REQUIRED
+my $output      = "";         # REQUIRED
+my $datestring  = localtime(); # REQUIRED
+my $novnc_port  = 0;  # REQUIRED
+my $novnc_token = ""; # REQUIRED
 
 # service stuff ----------------------------------------------------------------
-my $service     = "desktop";
+my $service     = "desktop";  # REQUIRED
 my $upload_base = "/var/www/html/desktop";   # root of the HTML web server area
 my $upload_dir  = "$upload_base/machines"; # where to store files. Must exist.
 my $upload_short = $upload_dir;
 $upload_short =~ s|$upload_base/||;
 
-my $redirect    = "";
-my $vm          = "";
-my $email       = "";
-my $persistent  = "no";
-my $cmd         = "";
-my $res         = "";
-my $vm_name     = "";
-my $html_handle;
-my $html_name   = "";
-my $base_name   = "";
-my $proc_novnc  = "";
-my $proc_qemu   = "";
-my ( $name, $path );
 
-# both IP and PORT will be random in 0-254.
-my $id          = 0;
-my $novnc_port  = 0;
-my $novnc_token = "";
-my $token_name  = "";
-my $token_handle;
-my $lock_name   = ""; # filename written to indicate IP:PORT lock
-my $lock_handle;
-my $qemuvnc_ip  = "";
-my $id_ok       = 0;  # flag true when we found a non used IP/PORT
-my $output      = "";
-my $smtp;
+my $vm          = "";   # CGI REQUIRED = machine
+my $email       = "";   # CGI REQUIRED = user
+my $persistent  = "no"; # CGI REQUIRED
+
+
+
+
+
+my $lock_name   = ""; # REQUIRED, cleaned, in _XXX, filename written to indicate IP:PORT lock
+my $qemuvnc_ip  = ""; # REQUIRED
+
+
 
 # ------------------------------------------------------------------------------
 # first clean up any 'old' VM sessions
 # ------------------------------------------------------------------------------
+my $lock_handle;  # TMP, can be made local
 foreach $lock_name (glob("$upload_dir/$service.*")) {
   # test modification date for 'cloud_vm.port' file
-  if ($vm_lifetime and time - (stat $lock_name)[9] > $vm_lifetime) {
+  if ($snapshot_lifetime and time - (stat $lock_name)[9] > $snapshot_lifetime) {
     # must kill that VM and its noVNC. Read file content as a hash table
     my %configParamHash = ();
     if (open ($lock_handle, $lock_name )) {
@@ -133,6 +113,8 @@ $lock_name = "";
 # ==============================================================================
 
 # test if we are working from the local machine 127.0.0.1 == ::1 in IPv6)
+my $fqdn         = hostfqdn(); # only used here
+my $host         = hostname;   # only used here
 if ($remote_host eq "::1") {
   $fqdn = "localhost";
   $host = $fqdn;
@@ -150,11 +132,20 @@ $output .= "<li>[OK] The server name is $server_name.</li>\n";
 $output .= "<li>[OK] You are accessing this service from $remote_host.</li>\n";
 
 # test host load
+my @cpuload = Sys::CpuLoad::load();   # only used here
+my $cpunb   = Sys::CPU::cpu_count();  # only used here
+my $cpuload0= $cpuload[0];            # only used here
 if ($cpuload0 > 1.25*$cpunb) {
   $error .= "CPU load exceeded. Current=$cpuload0. Available=$cpunb. Try again later. ";
 } else {
   $output .= "<li>[OK] Server $server_name load $cpuload0 is acceptable.</li>\n";
 }
+
+
+$CGI::POST_MAX = 1024*5000; # max 5M upload
+my $q     = new CGI;    # REQUIRED (used here and for redirect at the end) create new CGI object
+my $remote_host = $q->remote_host();
+my $server_name = $q->server_name();
 
 # testing/security
 if (not $error) {
@@ -182,6 +173,7 @@ if (not $error) {
 }
 
 # check input file name
+my ( $name, $path ); # TMP
 if (not $error) {
   ( $name, $path ) = fileparse ( $vm );
   $vm = $name;
@@ -197,6 +189,8 @@ if (not $error) {
 # a test is made to see if the port has already been allocated.
 # we search the 1st free port (allow up to 99)
 if (not $error) {
+  my $id          = 0;
+  my $id_ok       = 0;  # flag true when we found a non used IP/PORT
   for ($id=1; $id<100; $id++) {
     $novnc_port  = 6079 + $id;
     $lock_name   = "$upload_dir/$service.$novnc_port";
@@ -227,15 +221,15 @@ if (not $error) {
 
 # EMAIL: required to send the ID and link. check email
 if (not $error and $smtp_server) {
-  $email          = $q->param('email');      # 3- Indicate your email
+  $email          = $q->param('user');      # 3- Indicate your email
   if (Email::Valid->address($email))
   {
     $output .= "<li>[OK] Hello <b>$email</b> !</li>";
   }
   else
   {
-    if ($smtp_server and $smtp_port) {
-      $error .= "This service requires a valid email. Retry with one.";
+    if ($smtp_server and $email_from) {
+      $error .= "This service requires a valid email, not $email. Retry with one.";
     } else {
       $output .= "<li>[OK] will not send email.</li>";
     }
@@ -250,6 +244,7 @@ if (not $error and $smtp_server) {
 # define where our stuff will be (snapshot and HTML file)
 # use 'upload' directory to store the temporary VM. 
 # Keep it after creation so that the VM can run.
+my $base_name   = ""; # REQUIRED full path, unlinked at end
 $base_name = tempdir(TEMPLATE => "$service" . "_XXXXX", DIR => $upload_dir, CLEANUP => 1);
 
 # initiate the HTML output
@@ -257,9 +252,11 @@ $base_name = tempdir(TEMPLATE => "$service" . "_XXXXX", DIR => $upload_dir, CLEA
 # The HTML document contains some text (our output).
 # This way the cgi script can launch all and the web browser display is made independent
 # (else only display CGI dynamic content when script ends).
+my $html_name   = ""; # can be local. unlinked at end but in basename = fullpath _XXXX
 $html_name = $base_name . "/index.html";
 ( $name, $path ) = fileparse ( $base_name );
 
+my $html_handle;        # TMP can be local
 if (open($html_handle, '>', $html_name)) {
   # display information in the temporary HTML file
 
@@ -270,9 +267,6 @@ if (open($html_handle, '>', $html_name)) {
   <title>$service: $vm [$fqdn]</title>
 </head>
 <body>
-  <img alt="iFit" title="iFit"
-    src="http://$server_name/desktop/images/iFit-logo.png"
-    align="right" width="116" height="64">
   <img
     alt="SOLEIL" title="SOLEIL"
     src="http://$server_name/desktop/images/logo_soleil.png"
@@ -281,7 +275,7 @@ if (open($html_handle, '>', $html_name)) {
   <img alt="VirtualMachines" title="VirtualMachines"
     src="http://$server_name/desktop/images/virtualmachines.png"
     align="right" height="128" width="173">  
-  <a href="http://$server_name/desktop/">iFit Web Services</a> / (c) E. Farhi Synchrotron SOLEIL (2020).
+  <a href="http://$server_name/desktop/">Remote Desktop</a> / (c) E. Farhi Synchrotron SOLEIL (2020).
   <hr>
 END_HTML
   close $html_handle;
@@ -293,7 +287,11 @@ END_HTML
 }
 
 # set temporary VM file (snapshot)
+my $vm_name     = "";   # name of the snapshot file, full path
 $vm_name = $base_name . "/$service.qcow2";
+
+my $cmd         = "";   # TMP can be local
+my $res         = "";   # TMP can be local
 
 # CREATE SNAPSHOT FROM BASE VM IN THAT TEMPORARY FILE
 if (not $error) {
@@ -316,6 +314,9 @@ if (not $error and not -e $vm_name) {
   $error .= "Could not clone Virtual Machine $vm into snapshot. ";
 }
 
+my $proc_qemu   = ""; # REQUIRED killed at end
+  my $token_name  = "";   # REQUIRED token file name, cleaned after HTML/email sent
+  
 # LAUNCH CLONED VM with VMWARE video driver, KVM, and VNC, 4 cores. QXL driver may stall.
 if (not $error) {
   # cast a random token key for VNC
@@ -325,11 +326,13 @@ if (not $error) {
   if ($vm =~ /\.iso$/i) {
     $cmd = "qemu-system-x86_64 -m 4096 -boot d -cdrom $upload_dir/$vm " .
       "-hda $vm_name -machine pc,accel=kvm -enable-kvm " .
-      "-smp 4 -net user -net nic,model=ne2k_pci -cpu host -boot c -vga $video_qemu -vnc $qemuvnc_ip:1";
+      "-smp 4 -net user -net nic,model=ne2k_pci -cpu host -boot c -vga $qemu_video -vnc $qemuvnc_ip:1";
   } else {
     $cmd = "qemu-system-x86_64 -m 4096 -hda $vm_name -machine pc,accel=kvm -enable-kvm " .
-      "-smp 4 -net user -net nic,model=ne2k_pci -cpu host -boot c -vga $video_qemu -vnc $qemuvnc_ip:1";
+      "-smp 4 -net user -net nic,model=ne2k_pci -cpu host -boot c -vga $qemu_video -vnc $qemuvnc_ip:1";
   }
+  
+  my $redirect    = ""; # TMP: can be local everywhere it is used 
   
   if ($novnc_token) {
     # must avoid output to STDOUT, so redirect STDOUT to NULL.
@@ -341,6 +344,7 @@ if (not $error) {
     # Any 'pipe' such as "echo 'change vnc password\n$novnc_token\n' | qemu ..." is shown in 'ps'.
     # With a temp file and redirection, the token does not appear in the process list (ps).
     $token_name = $base_name . "/token"; 
+    my $token_handle;
     open($token_handle, '>', $token_name);
     print $token_handle "change vnc password\n$novnc_token\n";
     close($token_handle);
@@ -356,6 +360,7 @@ if (not $error) {
 }
 
 # LAUNCH NOVNC (do not wait for VNC to stop)
+my $proc_novnc  = ""; # REQUIRED killed at END
 if (not $error) {
   $cmd= "$upload_base/novnc/utils/websockify/run" .
     " --web $upload_base/novnc/" .
@@ -384,7 +389,7 @@ if (open($html_handle, '>>', $html_name)) {
     print $html_handle <<END_HTML;
 <ul>
 $output
-<li>[OK] No error, all is fine. Time-out is $vm_lifetime [s].</li>
+<li>[OK] No error, all is fine. Time-out is $snapshot_lifetime [s].</li>
 <li><b>[OK]</b> Connect to your machine at <a href=$redirect target=_blank><b>$redirect</b></a>.</li>
 </ul>
 <p>Hello $email !</p>
@@ -451,6 +456,7 @@ sleep(1); # make sure the files have been created and flushed
 
 # SEND THE HTML MESSAGE TO THE USER --------------------------------------------
 if ($email and $smtp_server and $smtp_port) {
+  my $smtp;
   if ($smtp_port) {
     $smtp= Net::SMTP->new($smtp_server); # e.g. port 25
   } else {
