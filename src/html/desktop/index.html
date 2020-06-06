@@ -78,7 +78,7 @@ password.
     
     <div class="row">
       <div class="col-25">
-        <label for="cpu">Nb of CPU's</label>
+        <label for="cpu">Number of CPU's</label>
       </div>
       <div class="col-75">
         <select id="cpu" name="cpu">
@@ -96,6 +96,21 @@ password.
         <select id="memory" name="memory">
           <option value="1">1 GB</option>
           <option value="2">2 GB</option>
+        </select>
+      </div>
+    </div>
+    
+    <div class="row">
+      <div class="col-25">
+        <label for="video">Video driver</label>
+      </div>
+      <div class="col-75">
+        <select id="video" name="video">
+          <option value="qxl"   >QXL/SPICE (recommended)</option>
+          <option value="cirrus">Basic, fail safe       </option>
+          <option value="std"   >Std, up to 1280x1024.  </option>
+          <option value="vmware">VmWare SVGA            </option>
+            <!-- vmware req. x11-drivers/xf86-video-vmware in VM -->
         </select>
       </div>
     </div>
