@@ -20,10 +20,17 @@ BEGIN {
     use CGI::Carp('fatalsToBrowser');
 }
 
+# TODO:
+# - kill does not kill all
+#[Sat Jun  6 23:00:18 2020] desktop.pl: Can't kill a non-numeric process ID at /usr/lib/x86_64-linux-gnu/perl5/5.26/Proc/Killfam.pm line 35.
+#[Sat Jun  6 23:00:18 2020] desktop.pl: END failed--call queue aborted.
+# - restore DSL.iso ?
+# - display real end-of-life date/time
+
 # dependencies -----------------------------------------------------------------
 
 use CGI;              # use CGI.pm
-use File::Temp      qw/ tempdir /;
+use File::Temp      qw/ tempdir tempfile /;
 use File::Path      qw/ rmtree  /;
 use File::Basename  qw(fileparse);
 use Sys::CPU;           # libsys-cpu-perl           for CPU::cpu_count
@@ -31,15 +38,11 @@ use Sys::CpuLoad;       # libsys-cpuload-perl       for CpuLoad::load
 use JSON;               # libjson-perl              for JSON
 use IO::Socket::INET;
 use Sys::MemInfo qw(freemem);
-
-
-
-
-use Net::Domain     qw(hostname hostfqdn);
-use Net::SMTP;          # core Perl
 use Proc::Background;   # libproc-background-perl   for Background->new
+
+#use Net::Domain     qw(hostname hostfqdn);
+use Net::SMTP;          # core Perl
 use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
-use Email::Valid;       # libemail-valid-perl
 
 # ------------------------------------------------------------------------------
 # service configuration: tune for your needs
@@ -70,6 +73,11 @@ $config{dir_snapshots}            = "$config{dir_service}/snapshots";
 
 # full path to snapshot config/lock files. Must NOT be accessible from http://
 #   e.g. /tmp to store "desktop_XXXXXXXX.json" files
+#
+# NOTE: apache has a protection in:
+#   /etc/systemd/system/multi-user.target.wants/apache2.service
+#   PrivateTmp=true
+# which creates a '/tmp' in e.g. /tmp/systemd-private-*-apache2.service-*/
 $config{dir_cfg}                  = File::Spec->tmpdir(); 
 
 # full path to snapshots and temporary files, full path
@@ -230,7 +238,7 @@ $session{video}       = $q->param('video');
 if (Sys::CPU::cpu_count()-Sys::CpuLoad::load() < $session{cpu}) {
   $error .= "Not enough free CPU's. Try again later.\n";
 }
-if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() < $config{service_max_load}) {
+if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() > $config{service_max_load}) {
   $error .= "Server load exceeded. Try again later.\n";
 }
 if (freemem() / 1024/1024 < $session{memory}) {
@@ -245,7 +253,7 @@ if (not -e "$config{dir_machines}/$session{machine}") {
 
 
 # assemble welcome message -----------------------------------------------------
-my $ok   = '<div style="color:green">[OK]</div>';
+my $ok   = '<font color=green>[OK]</font>';
 
 # header with images, and start a list of items <li>
 $output .= <<END_HTML;
@@ -295,7 +303,7 @@ if (not $error) {
 
   my $cmd  = "";
   my $res  = "";
-  my $http = "http://$session{server_name}/$session{service}";
+  my $http = "http://$session{server_name}/$config{service}";
   
   if ($session{machine} =~ /\.iso$/i) { # machine ends with .ISO
     $cmd      = "qemu-img create -f qcow2 $session{snapshot} $session{disk}G";
@@ -308,8 +316,7 @@ if (not $error) {
     $output  .= "<li>$ok Creating snapshot from ";
   }
   $output .= "<a href='$http/machines/$session{machine}'>"
-  . "$session{machine}</a> in <a href='$http/snapshots/$session{sname}'>"
-  . "$session{name}</a></li>\n";
+  . "$session{machine}</a> as $session{name}</li>\n";
   
   # check for existence of cloned VM
   sleep(1); # make sure the VM has been cloned
@@ -326,10 +333,10 @@ if (not $error) {
   my $cmd = 
   $cmd = "$config{qemu_exec} -hda $session{snapshot} -smp $session{cpu}"
     . " -m $session{memory} -machine pc,accel=kvm -enable-kvm"
-    . " -net user -net nic,model=ne2k_pci -cpu host -vga $session{qemu_video}";
+    . " -net user -net nic,model=ne2k_pci -cpu host -vga $session{video}";
   
   if ($session{machine} =~ /\.iso$/i) {
-    $cmd .= " -boot d -cdrom $session{dir_machines}/$session{machine}";
+    $cmd .= " -boot d -cdrom $config{dir_machines}/$session{machine}";
   } else {
     $cmd .= " -boot c";
   }
@@ -363,7 +370,7 @@ my $proc_novnc  = ""; # REQUIRED killed at END
 if (not $error) {
   $cmd= "$config{dir_novnc}/utils/websockify/run" .
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:5901";
-  if ($session{persistent}) { $cmd .= " --run-once"; }
+  if (not $session{persistent}) { $cmd .= " --run-once"; }
 
   $proc_novnc = Proc::Background->new($cmd);
   if (not $proc_novnc) {
@@ -379,11 +386,11 @@ session_save(\%session);
 
 # complete output message ------------------------------------------------------
 if (not $error) {
-  my $url = "http://$remote_host:$port/vnc.html?host=$remote_host&port=$port";
-  $output .= "<li>%ok No error, all is fine. <b>Time-out is $session{snapshot_lifetime} [s]</b>.</li>\n";
-  $output .= "<li><b>$ok</b> Connect to your machine at <a href=$url target=_blank><b>$url</b></a>.</li>\n";
+  my $url = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
+  $output .= "<li>$ok No error, all is fine. <b>Time-out is $config{snapshot_lifetime} [s]</b>.</li>\n";
+  $output .= "<li><b>$ok Connect to your machine at <a href=$url target=_blank>$url</b></a>.</li>\n";
   if ($session{novnc_token}) {
-    $output .= "<li><b>$ok</b> Security token is: $session{novnc_token}</li>\n";
+    $output .= "<li><b>$ok Security token is: $session{novnc_token}</b></li>\n";
   }
   $output .= "</ul><hr>\n";
   $output .= <<END_HTML;
@@ -394,22 +401,21 @@ if (not $error) {
 
 
     <h1><a href=$url target=_blank>$url</a></h1>
-    
-    <br>
-    
     <h1>Token: $session{novnc_token}</h1>
 
 
     <p>
     Remember that: <ul>
     <li>The virtual machine is created on request, and not kept. 
-      <b>All work done <b>must be saved elsewhere</b> 
+      Your work <b>must be saved elsewhere</b> 
       (e.g. mounted disk, ssh/sftp, Dropbox, OwnCloud...).</li>
     <li>We recommend that you adapt the <b>screen resolution</b> of the 
       virtual machine using the bottom-left menu <i>Preferences/Monitor 
-      Settings</i>. and the <b>keyboard layout</b> from the <i>Preferences</i> as well.
+      Settings</i>. as well as the <b>keyboard layout</b> from the <i>Preferences</i> as well.
     </ul></p>
-
+    
+    <hr>
+    <small>(c) 2020 - GRADES - Synchrotron Soleil - Thanks for using our data analysis services !</small>
     </body>
     </html>
 END_HTML
@@ -464,7 +470,9 @@ sub session_save {
   my %session = %{ $session_ref };
   
   open my $fh, ">", $session{json};
-  print $fh JSON::encode_json(\%session);
+  my $json = JSON::encode_json(\%session);
+  print STDERR "$json\n";
+  print $fh "$json\n";
   close $fh;
 }
 
@@ -491,7 +499,7 @@ sub session_stop {
   # make sure QEMU/noVNC and asssigned SHELLs are killed
   #   but remove current process, not to kill 'myself'.   
   if ($session{pid}) {
-    map { if ($i != $$) { killfam('TERM', @_); } } @{ $session{pid} };
+    killfam('TERM', $session{pid});
   }
   
   my $datestart   = $session{date};
@@ -519,8 +527,10 @@ sub service_housekeeping {
   # - remove orphan snapshots (no corresponding JSON file)
   # - remove snapshots that have gone above their lifetime
   foreach $snapshot (glob("$dir/$service"."_*")) {
+    
     if (-d $snapshot) { # is a snapshot directory
       my $snaphot_name = fileparse($snapshot); # just the session name
+      print STDERR "housekeeping: $snapshot $cfg/$snaphot_name.json\n";
       if (not -e "$cfg/$snaphot_name.json") {
         # remove orphan $snapshot (no JSON)
         rmtree( $snapshot );
@@ -535,7 +545,7 @@ sub service_housekeeping {
   
   # now count how many active sessions we have.
   my @jsons = glob("$cfg/$service"."_*.json");
-  my $nb = scalar(@jsons);
+  my $nb    = scalar(@jsons);
   my $err   = "";
   if ($nb > $config{service_max_instance_nb}) {
     $error = "Too many active sessions $nb. Max $config{service_max_instance_nb}. Try again later.";
