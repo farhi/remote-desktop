@@ -163,7 +163,7 @@ my $error       = "";
 my $output      = "";
 
 # Check running snapshots and clean any left over.
-$error .= service_housekeeping($config);  # see below for private subroutines.
+$error .= service_housekeeping(\%config);  # see below for private subroutines.
 
 # ------------------------------------------------------------------------------
 # Session variables: into a hash as well.
@@ -180,7 +180,7 @@ $session{snapshot}    = "$session{dir_snapshot}/$config{service}.qcow2";
 $session{json}        = "$config{dir_cfg}/$session{name}.json";
 $session{user}        = "";
 $session{password}    = "";
-$session{persistent}  = 0;  # implies lower server load
+$session{persistent}  = "";  # implies lower server load
 $session{cpu}         = $config{snapshot_alloc_cpu};  # cores
 $session{memory}      = $config{snapshot_alloc_mem};  # in MB
 $session{disk}        = $config{snapshot_alloc_disk}; # only for ISO
@@ -259,7 +259,7 @@ $output .= <<END_HTML;
     alt="SOLEIL" title="SOLEIL"
     src="http://$session{server_name}/desktop/images/logo_soleil.png"
     align="left" border="0" height="64">
-  <h1>$service: Remote Desktop: $session{machine}</h1>
+  <h1>$config{service}: Remote Desktop: $session{machine}</h1>
   <img alt="RemoteDesktop" title="RemoteDesktop"
     src="http://$session{server_name}/desktop/images/virtualmachines.png"
     align="right" height="128" width="173">  
@@ -268,16 +268,16 @@ $output .= <<END_HTML;
 END_HTML
 
 $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
-$output .= "<li>$ok Starting on $session{datestring}</li>\n";
+$output .= "<li>$ok Starting on $session{date}</li>\n";
 $output .= "<li>$ok The server name is $session{server_name}.</li>\n";
 $output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
 
-if ($session{persistent} =~ /yes|persistent|true/i or $session{persistent} == 1) {
+if ($session{persistent} =~ /yes|persistent|true|1/i) {
   $output .= "<li>$ok Using persistent session (re-entrant login).</li>\n";
-  $session{persistent} = 1;
+  $session{persistent} = "yes";
 } else {
-  $output .= "<li>$ok Using persistent session (<b>one-shot</b> login).</li>\n";
-  $session{persistent} = 0;
+  $output .= "<li>$ok Using non persistent session (<b>one-shot</b> login).</li>\n";
+  $session{persistent} = "";
 }
 
 { # find a free port on server (127.0.0.1)
@@ -308,8 +308,8 @@ if (not $error) {
     $output  .= "<li>$ok Creating snapshot from ";
   }
   $output .= "<a href='$http/machines/$session{machine}'>"
-  . "$session{machine}</a> in <a href='$http/snapshots/$session{snapshot_name}'>"
-  . "$session{snapshot_name}</a></li>\n";
+  . "$session{machine}</a> in <a href='$http/snapshots/$session{sname}'>"
+  . "$session{name}</a></li>\n";
   
   # check for existence of cloned VM
   sleep(1); # make sure the VM has been cloned
@@ -336,7 +336,7 @@ if (not $error) {
   $cmd .= " -vnc $session{qemuvnc_ip}:1";
   
   my ($token_handle, $token_name) = tempfile(UNLINK => 1);
-  if ($service{novnc_token}) {
+  if ($session{novnc_token}) {
     # must avoid output to STDOUT, so redirect STDOUT to NULL.
     #   file created just for the launch, removed immediately. 
     #   Any 'pipe' such as "echo 'change vnc password\n$novnc_token\n' | qemu ..." is shown in 'ps'.
@@ -375,7 +375,7 @@ if (not $error) {
 }
 
 # save session info
-session_save(%session);
+session_save(\%session);
 
 # complete output message ------------------------------------------------------
 if (not $error) {
@@ -429,10 +429,10 @@ my $html_name = "$session{dir_snapshot}/index.html";
 }
 
 # send message via email when possible
-session_email(%config, %session, $output);
+# session_email(\%config, \%session, $output);
 
 # display the output message (redirect) ----------------------------------------
-my $redirect="http://$session{server_name}/desktop/snapshots/$session{snapshot_name}/index.html";
+my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
 print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
 sleep(5); # make sure the display comes in.
 
@@ -447,7 +447,7 @@ if (not $error and $proc_novnc and $proc_qemu) {
 
 # final clean-up when QEMU/noVNC ends ------------------------------------------
 END {
-  session_stop(%session);
+  session_stop(\%session);
 }
 
 
@@ -460,7 +460,8 @@ END {
 
 # session_save($session): save session hash into a JSON.
 sub session_save {
-  my (%session) = @_;
+  my $session_ref  = shift;
+  my %session = %{ $session_ref };
   
   open my $fh, ">", $session{json};
   print $fh JSON::encode_json(\%session);
@@ -470,7 +471,7 @@ sub session_save {
 # $session = session_load($file): load session hash from JSON.
 #   return $session
 sub session_load {
-  my $file = @_;
+  my $file = shift;
   
   open my $fh, "<", $file;
   $json = <$fh>;
@@ -480,7 +481,8 @@ sub session_load {
 
 # session_stop($session): stop given session, and remove files.
 sub session_stop {
-  my (%session) = @_;
+  my $session_ref  = shift;
+  my %session = %{ $session_ref };
   
   # remove directory and JSON config
   if (-e $session{dir_snapshot})  { rmtree($session{dir_snapshot}); } 
@@ -506,7 +508,8 @@ sub session_stop {
 #   - remove orphan 'snapshots' (may be left from a hard reboot).
 # return an $error string (or empty when all is OK).
 sub service_housekeeping {
-  my (%config)  = shift @_;
+  my $config_ref  = shift;
+  my %config = %{ $config_ref };
   
   my $dir     = $config{dir_snapshots};
   my $cfg     = $config{dir_cfg};
@@ -515,7 +518,7 @@ sub service_housekeeping {
   # clean:
   # - remove orphan snapshots (no corresponding JSON file)
   # - remove snapshots that have gone above their lifetime
-  foreach $snapshot (glob("$dir/$service_*")) {
+  foreach $snapshot (glob("$dir/$service"."_*")) {
     if (-d $snapshot) { # is a snapshot directory
       my $snaphot_name = fileparse($snapshot); # just the session name
       if (not -e "$cfg/$snaphot_name.json") {
@@ -524,13 +527,15 @@ sub service_housekeeping {
       } elsif ($config{snapshot_lifetime} 
           and time - (stat $snapshot)[9] > $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
-        session_stop(session_load($snapshot));
+        my %session = session_load($snapshot);
+        session_stop(\%session);
       }
     }
   }
   
   # now count how many active sessions we have.
-  my $nb    = scalar(glob("$cfg/$service_*.json"));
+  my @jsons = glob("$cfg/$service"."_*.json");
+  my $nb = scalar(@jsons);
   my $err   = "";
   if ($nb > $config{service_max_instance_nb}) {
     $error = "Too many active sessions $nb. Max $config{service_max_instance_nb}. Try again later.";
@@ -538,9 +543,15 @@ sub service_housekeeping {
   return $err;
 } # service_housekeeping
 
+
+
 # session_email($config, $session, $output)
 sub session_email {
-  my ($config, $session, $output) = shift @_;
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $session_ref = shift;
+  my %session     = %{ $session_ref };
+  my $out         = shift;
 
   if ($session{user} and $config{smtp_server} and $config{smtp_port}) {
     my $smtp;
@@ -562,7 +573,7 @@ sub session_email {
       $smtp->datasend("Subject: [Desktop] Remote $session{machine} connection information\n");
       $smtp->datasend("Content-Type: text/html; charset=\"UTF-8\" \n");
       $smtp->datasend("\n"); # end of header
-      $smtp->datasend($output);
+      $smtp->datasend($out);
       $smtp->dataend;
       $smtp->quit;
     }
