@@ -226,11 +226,17 @@ if ($res = $q->cgi_error()){
 $session{remote_host} = $q->remote_host(); # the 'client'
 $session{server_name} = $q->server_name(); # the 'server'
 
+my $cgi_undef = 0;
 for ('machine','persistent','user','password','cpu','memory','video') {
   my $val = $q->param($_);
   if (defined($val)) {
-    $session{$_}     = $val;
-  }
+    $session{$_} = $val;
+  } else { $cgi_undef++; }
+}
+
+if ($cgi_undef > 3) {
+  # many undefs from CGI: no HTML form connected: running as detached script
+  print STDERR "Running as detached script.\n";
 }
 
 # ------------------------------------------------------------------------------
@@ -451,9 +457,15 @@ my $html_name = "$session{dir_snapshot}/index.html";
 # session_email(\%config, \%session, $output);
 
 # display the output message (redirect) ----------------------------------------
-my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
-print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
-sleep(5); # make sure the display comes in.
+if ($cgi_undef > 3) {
+  # detached script
+  print STDERR "$output\n";
+} else {
+  # running from HTML FORM
+  my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
+  print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
+  sleep(5); # make sure the display comes in.
+}
 
 # remove any local footprint of the token during exec
 if (-e $html_name)  { unlink $html_name; }
