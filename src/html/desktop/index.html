@@ -134,7 +134,8 @@ password.
         <label for="terms" style="color:red">I agree with the Terms and Conditions</label>
       </div>
       <div class="col-25">
-        <input type="checkbox" id="terms" name="terms" value="terms"></input>
+        <input type="checkbox" id="terms" name="terms" value="terms"
+          onclick="terms_changed(this)"></input>
       </div>
       <div class="col-50">
         <small><i>
@@ -149,7 +150,7 @@ password.
     </div>
     
     <div class="row">
-      <input type="submit" value="Create">
+      <input type="submit" value="Click 'Agree on Terms'" id="submit_button" disabled/>
     </div>
     
   </form>
@@ -163,5 +164,21 @@ password.
 </small>
 
 </body>
+<script>
+  //JavaScript function that enables or disables a submit button depending
+  //on whether a checkbox has been ticked or not.
+  function terms_changed(termsCheckBox){
+      //If the checkbox has been checked
+      if(termsCheckBox.checked){
+          //Set the disabled property to FALSE and enable the button.
+          document.getElementById("submit_button").disabled = false;
+          document.getElementById("submit_button").value    = "Create";
+      } else{
+          //Otherwise, disable the submit button.
+          document.getElementById("submit_button").disabled = true;
+          document.getElementById("submit_button").value    = "Click 'Agree on Terms'";
+      }
+  }
+</script>
 
 </html>
