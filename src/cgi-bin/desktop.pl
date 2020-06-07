@@ -12,7 +12,9 @@
 #
 # sudo adduser www-data kvm
 # sudo chmod 755 /etc/qemu-ifup
-#
+
+
+
 # ensure all fatals go to browser during debugging and set-up
 # comment this BEGIN block out on production code for security
 BEGIN {
@@ -21,7 +23,6 @@ BEGIN {
 }
 
 # TODO:
-# persistent checkbox
 # - qemu_ip:1 may be used -> find an other port 
 
 # dependencies -----------------------------------------------------------------
@@ -39,7 +40,6 @@ use Proc::Background;   # libproc-background-perl   for Background->new
 use Proc::ProcessTable; # libproc-processtable-perl
 use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
 
-#use Net::Domain     qw(hostname hostfqdn);
 use Net::SMTP;          # core Perl
 
 
@@ -150,18 +150,21 @@ $config{email_passwd}             = "";
 # ------------------------------------------------------------------------------
 for($i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
-  if (/^--(\w+)=(\w+)$/) {      # e.g. '--opt=value'
+  if(/--help|-h$/) {
+    print STDERR "$0: launch a QEMU/KVM machine in a browser window.\n\n";
+    print STDERR "Usage: $0 --option1=value1 ...\n\n";
+    print STDERR "Valid options are:\n";
+    foreach $key (keys %config) {
+      print STDERR "  --$key=VALUE [$config{$key}]\n";
+    }
+    die;
+  } elsif (/^--(\w+)=(\w+)$/) {      # e.g. '--opt=value'
     if (exists($config{$1})) {
       $config{$1} = $2;
     } 
-  } elsif (/^--(\w+)$/) {       # e.g. '--opt value'
-    if (exists($config{$1})) {  
-      if ($i+1 < @ARGV && $ARGV[$i+1] !~ /^--(\w+)$/) { # value is not '--' stuff
-        $config{$1} = $ARGV[$i+1];
-        $i++;
-      } else {             # e.g. 'value' is an other '--' -> set to True
-        $config{$1} = 1;
-      }
+  } elsif (/^--(\w+)=([a-zA-Z0-9_\ \"\.\-\:\~\\\/]+)$/) {      # e.g. '--opt=file'
+    if (exists($config{$1})) {
+      $config{$1} = $2;
     } 
   }
 }
@@ -182,7 +185,7 @@ my %session;
 # transfer defaults
 $session{machine}     = $config{machine};
 $session{dir_snapshot}= tempdir(TEMPLATE => "$config{service}" . "_XXXXXXXX", 
-  DIR => $config{dir_snapshots}, CLEANUP => 1);
+  DIR => $config{dir_snapshots}, CLEANUP => 1) || die;
 $session{name}        = File::Basename::fileparse($session{dir_snapshot});
 $session{snapshot}    = "$session{dir_snapshot}/$config{service}.qcow2";
 $session{json}        = "$config{dir_cfg}/$session{name}.json";
@@ -200,7 +203,7 @@ $session{date}        = localtime();
 # get PIDs:     my @pid = @{ $session{pid} };
 $session{pid}         = $$;     # we search all children in session_stop
 $session{port}        = 0;      # will be found automatically (6080)
-$session{qemuvnc_ip}  = "127.0.0.1";
+$session{qemuvnc_ip}  = "127.0.0.2";
 if ($config{service_use_vnc_token}) {
   # cast a random token key for VNC: 8 random chars in [a-z A-Z digits]
   sub rndStr{ join'', @_[ map{ rand @_ } 1 .. shift ] };
@@ -223,13 +226,12 @@ if ($res = $q->cgi_error()){
 $session{remote_host} = $q->remote_host(); # the 'client'
 $session{server_name} = $q->server_name(); # the 'server'
 
-$session{machine}     = $q->param('machine');
-$session{persistent}  = $q->param('persistent');
-$session{user}        = $q->param('user');
-$session{password}    = $q->param('password');
-$session{cpu}         = $q->param('cpu');
-$session{memory}      = $q->param('memory');
-$session{video}       = $q->param('video');
+for ('machine','persistent','user','password','cpu','memory','video') {
+  my $val = $q->param($_);
+  if (defined($val)) {
+    $session{$_}     = $val;
+  }
+}
 
 # ------------------------------------------------------------------------------
 # Session checks: cpu, memory, disk, VM
@@ -286,7 +288,7 @@ if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|tr
   $session{persistent} = "";
 }
 
-{ # find a free port on server (127.0.0.1)
+{ # find a free port on server (127.0.0.2)
   my $socket = IO::Socket::INET->new(Proto => 'tcp', LocalAddr => $session{qemuvnc_ip});
   $session{port} = $socket->sockport();
   $socket->close;
@@ -504,14 +506,18 @@ sub session_stop {
   my %session = %{ $session_ref };
   
   # remove directory and JSON config
-  if (-e $session{dir_snapshot})  { rmtree($session{dir_snapshot}); } 
-  if (-e $session{json})          { unlink($session{json}); }
+  if ($session{dir_snapshot} and -e $session{dir_snapshot})  
+    { rmtree($session{dir_snapshot}); } 
+  if ($session{json} and -e $session{json})          
+    { unlink($session{json}); }
   
   my $now         = localtime();
-  print STDERR "[$now] STOP $session{machine} started on [$session{date}] for $session{user}\@$session{remote_host}\n";
+  if ($session{remote_host}) { 
+    print STDERR "[$now] STOP $session{machine} started on [$session{date}] for $session{user}\@$session{remote_host}\n";
+  }
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
-  {
+  if ($session{pid}) {
     my @pid = flatten(proc_getchildren($session{pid}));
     print STDERR "[$now]   Kill @pid\n";
     killfam('TERM', reverse sort @pid); # the CGI must be last
@@ -542,7 +548,7 @@ sub service_housekeeping {
       print STDERR "$config{service}: housekeeping: $snapshot $cfg/$snaphot_name.json\n";
       if (not -e "$cfg/$snaphot_name.json") {
         # remove orphan $snapshot (no JSON)
-        rmtree( $snapshot );
+        rmtree( $snapshot ) || print STDERR "Failed removing $snapshot";
       } elsif ($config{snapshot_lifetime} 
           and time > (stat $snapshot)[9] + $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
