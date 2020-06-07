@@ -36,7 +36,7 @@ If you are not registered, just enter a valid email address below, without any
 password.
 </p>
 
-<!-- ----------------------------------------------------------------------- -->
+<!-- The form -------------------------------------------------------------- -->
 <div class="container">
   <form action="/cgi-bin/desktop.pl" method="post" target="_blank"
     autocomplete="on" enctype="multipart/form-data" name="desktop">
@@ -70,7 +70,7 @@ password.
       </div>
       <div class="col-75">
         <select id="machine" name="machine">
-          <option value="dsl.iso"                        >Damn Small Linux</option>
+          <option value="dsl.iso">Damn Small Linux</option>
         </select>
       </div>
     </div>
@@ -93,8 +93,9 @@ password.
       </div>
       <div class="col-75">
         <select id="memory" name="memory">
-          <option value="1">1 GB</option>
-          <option value="2">2 GB</option>
+          <option value="1024">1 GB</option>
+          <option value="2048">2 GB</option>
+          <option value="4096">4 GB</option>
         </select>
       </div>
     </div>
@@ -105,10 +106,10 @@ password.
       </div>
       <div class="col-75">
         <select id="video" name="video">
-          <option value="qxl"   >QXL/SPICE (recommended)</option>
-          <option value="cirrus">Basic, fail safe       </option>
-          <option value="std"   >Std, up to 1280x1024.  </option>
-          <option value="vmware">VmWare SVGA            </option>
+          <option value="qxl"   >Default  (QXL/SPICE, recommended)</option>
+          <option value="cirrus">Basic    (fail safe)       </option>
+          <option value="std"   >Standard (up to 1280x1024) </option>
+          <option value="vmware">VmWare   (SVGA, may fail)  </option>
             <!-- vmware req. x11-drivers/xf86-video-vmware in VM -->
         </select>
       </div>
@@ -164,6 +165,8 @@ password.
 </small>
 
 </body>
+
+<!-- JavaScript to handle the Terms and Condition checkbox ----------------- -->
 <script>
   //JavaScript function that enables or disables a submit button depending
   //on whether a checkbox has been ticked or not.
