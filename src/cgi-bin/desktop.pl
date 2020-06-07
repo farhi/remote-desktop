@@ -21,11 +21,8 @@ BEGIN {
 }
 
 # TODO:
-# - kill does not kill all
-#[Sat Jun  6 23:00:18 2020] desktop.pl: Can't kill a non-numeric process ID at /usr/lib/x86_64-linux-gnu/perl5/5.26/Proc/Killfam.pm line 35.
-#[Sat Jun  6 23:00:18 2020] desktop.pl: END failed--call queue aborted.
-# - restore DSL.iso ?
-# - display real end-of-life date/time
+# persistent checkbox
+# - qemu_ip:1 may be used -> find an other port 
 
 # dependencies -----------------------------------------------------------------
 
@@ -39,10 +36,12 @@ use JSON;               # libjson-perl              for JSON
 use IO::Socket::INET;
 use Sys::MemInfo qw(freemem);
 use Proc::Background;   # libproc-background-perl   for Background->new
+use Proc::ProcessTable; # libproc-processtable-perl
+use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
 
 #use Net::Domain     qw(hostname hostfqdn);
 use Net::SMTP;          # core Perl
-use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
+
 
 # ------------------------------------------------------------------------------
 # service configuration: tune for your needs
@@ -83,7 +82,8 @@ $config{dir_cfg}                  = File::Spec->tmpdir();
 # full path to snapshots and temporary files, full path
 $config{dir_novnc}                = "$config{dir_service}/novnc";
 
-# max session life time in sec. 1 day is 86400 s. Use 0 to disable (infinite)
+# max session life time in sec. 1 day is 86400 s. Highly recommended.
+#   Use 0 to disable (infinite)
 $config{snapshot_lifetime}        = 86400; 
 
 # default nb of CPU per instance.
@@ -198,7 +198,7 @@ $session{date}        = localtime();
 #   on how to handle arrays in a hash.
 # push new PID: push @{ $session{pid} }, 1234;
 # get PIDs:     my @pid = @{ $session{pid} };
-$session{pid}         = [ $$ ]; # array, will kill all in array at stop
+$session{pid}         = $$;     # we search all children in session_stop
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
@@ -250,8 +250,6 @@ if (not -e "$config{dir_machines}/$session{machine}") {
 
 # check user credentials TODO
 
-
-
 # assemble welcome message -----------------------------------------------------
 my $ok   = '<font color=green>[OK]</font>';
 
@@ -280,7 +278,7 @@ $output .= "<li>$ok Starting on $session{date}</li>\n";
 $output .= "<li>$ok The server name is $session{server_name}.</li>\n";
 $output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
 
-if ($session{persistent} =~ /yes|persistent|true|1/i) {
+if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|true|1/i) {
   $output .= "<li>$ok Using persistent session (re-entrant login).</li>\n";
   $session{persistent} = "yes";
 } else {
@@ -316,7 +314,7 @@ if (not $error) {
     $output  .= "<li>$ok Creating snapshot from ";
   }
   $output .= "<a href='$http/machines/$session{machine}'>"
-  . "$session{machine}</a> as $session{name}</li>\n";
+  . "$session{machine}</a> as session $session{name}</li>\n";
   
   # check for existence of cloned VM
   sleep(1); # make sure the VM has been cloned
@@ -359,7 +357,6 @@ if (not $error) {
     $error .= "Could not start QEMU/KVM for $session{machine}.\n";
   } else {
     $output .= "<li>$ok Started QEMU/KVM for $session{machine} with VNC.</li>\n";
-    push @{ $session{pid} }, $proc_qemu->pid();
   }
   sleep(1);
   unlink($token_name);
@@ -377,7 +374,6 @@ if (not $error) {
     $error .= "Could not start noVNC.\n";
   } else {
     $output .= "<li>$ok Started noVNC session $session{port}</li>\n";
-    push @{ $session{pid} }, $proc_novnc->pid();
   }
 }
 
@@ -387,10 +383,15 @@ session_save(\%session);
 # complete output message ------------------------------------------------------
 if (not $error) {
   my $url = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
-  $output .= "<li>$ok No error, all is fine. <b>Time-out is $config{snapshot_lifetime} [s]</b>.</li>\n";
+  
+  $output .= "<li>$ok No error, all is fine.</li>\n";
   $output .= "<li><b>$ok Connect to your machine at <a href=$url target=_blank>$url</b></a>.</li>\n";
   if ($session{novnc_token}) {
     $output .= "<li><b>$ok Security token is: $session{novnc_token}</b></li>\n";
+  }
+  if ($config{snapshot_lifetime}) {
+    my $datestring = localtime(time()+$config{snapshot_lifetime});
+    $output .= "<li><b>$ok You can use your machine until $datestring.</b></li>\n";
   }
   $output .= "</ul><hr>\n";
   $output .= <<END_HTML;
@@ -401,9 +402,16 @@ if (not $error) {
 
 
     <h1><a href=$url target=_blank>$url</a></h1>
-    <h1>Token: $session{novnc_token}</h1>
+END_HTML
+if ($session{novnc_token}) {
+  $output .= "\n<h1>Token: $session{novnc_token}</h1>\n\n";
+}
+if (not $session{persistent} =~ /yes|persistent|true|1/i) {
+  $output .= "<i>NOTE: You can only login once (non persistent).</i>\n";
+}
 
-
+$output .= <<END_HTML;
+    
     <p>
     Remember that: <ul>
     <li>The virtual machine is created on request, and not kept. 
@@ -421,7 +429,7 @@ if (not $error) {
 END_HTML
 } else {
   $output .= "</ul><hr>\n";
-  $output .= "<h1>[ERROR]</li>\n\n";
+  $output .= "<h1>[ERROR]</h1>\n\n";
   $output .= "<p><div style='color:red'>$error</div></p>\n";
   $output .= "</body></html>\n";
 }
@@ -496,17 +504,14 @@ sub session_stop {
   if (-e $session{dir_snapshot})  { rmtree($session{dir_snapshot}); } 
   if (-e $session{json})          { unlink($session{json}); }
   
-  # make sure QEMU/noVNC and asssigned SHELLs are killed
-  #   but remove current process, not to kill 'myself'.   
-  if ($session{pid}) {
-    killfam('TERM', $session{pid});
-  }
-  
-  my $datestart   = $session{date};
-  my $machine     = $session{machine};
-  my $user        = $session{user};
   my $now         = localtime();
-  print STDERR "[$now] stopped $machine started on [$datestart] for $user\n";
+  print STDERR "[$now] stop $session{machine} started on [$session{date}] for $session{user} at $session{remote_host}.\n";
+  
+  # make sure QEMU/noVNC and asssigned SHELLs are killed
+  if ($session{pid}) {
+    my @pid = flatten(proc_getchildren($session{pid}));
+    killfam('TERM', reverse sort @pid);
+  }
   
 } # session_stop
 
@@ -535,7 +540,7 @@ sub service_housekeeping {
         # remove orphan $snapshot (no JSON)
         rmtree( $snapshot );
       } elsif ($config{snapshot_lifetime} 
-          and time - (stat $snapshot)[9] > $config{snapshot_lifetime}) { 
+          and time > (stat $snapshot)[9] + $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
         my %session = session_load($snapshot);
         session_stop(\%session);
@@ -589,3 +594,28 @@ sub session_email {
     }
   }
 } # session_email
+
+# proc_getchildren($pid): return all children PID's from parent.
+# use: my @children = flatten(proc_getchildren($$));
+sub flatten {
+  map { ref $_ ? flatten(@{$_}) : $_ } @_;
+}
+
+sub proc_getchildren {
+  my $parent= shift;
+  my @pid = [];
+  push @pid, $parent;
+  
+  my $proc_table=Proc::ProcessTable->new();
+  for my $proc (@{$proc_table->table()}) {
+    if ($proc->ppid == $parent) {
+      my $child = $proc->pid;
+      print "$parent -> $child\n";
+      push @pid, $child;
+      my @pid_children = proc_getchildren($child);
+      push @pid, @pid_children;
+      
+    }
+  }
+  return @pid;
+}
