@@ -1,6 +1,18 @@
 #!/usr/bin/perl -w
 
-# requirements:
+# This script is triggered by a FORM or run as a script.
+# to test this script, launch from the project root level something like:
+#
+#   cd remote-desktop
+#   perl src/cgi-bin/desktop.pl --dir_service=src/html/desktop \
+#     --dir_html=src/html --dir_snapshots=/tmp
+#
+# Then follow printed instructions in the terminal:
+# open a browser at something like:
+# - http://localhost:38443/vnc.html?host=localhost&port=38443
+#
+# Requirements
+# ============
 # sudo apt install apache2 libapache2-mod-perl2
 # sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
 #
@@ -12,6 +24,8 @@
 #
 # sudo adduser www-data kvm
 # sudo chmod 755 /etc/qemu-ifup
+#
+# (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. GPL2.
 
 
 
@@ -23,7 +37,8 @@ BEGIN {
 }
 
 # TODO:
-# - qemu_ip:1 may be used -> find an other port 
+# - User credentials
+# - email
 
 # dependencies -----------------------------------------------------------------
 
@@ -35,6 +50,7 @@ use Sys::CPU;           # libsys-cpu-perl           for CPU::cpu_count
 use Sys::CpuLoad;       # libsys-cpuload-perl       for CpuLoad::load
 use JSON;               # libjson-perl              for JSON
 use IO::Socket::INET;
+use IO::Socket::IP;
 use Sys::MemInfo qw(freemem);
 use Proc::Background;   # libproc-background-perl   for Background->new
 use Proc::ProcessTable; # libproc-processtable-perl
@@ -203,13 +219,13 @@ $session{date}        = localtime();
 # get PIDs:     my @pid = @{ $session{pid} };
 $session{pid}         = $$;     # we search all children in session_stop
 $session{port}        = 0;      # will be found automatically (6080)
-$session{qemuvnc_ip}  = "127.0.0.2";
+$session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
   # cast a random token key for VNC: 8 random chars in [a-z A-Z digits]
   sub rndStr{ join'', @_[ map{ rand @_ } 1 .. shift ] };
-  $session{novnc_token} = rndStr 8, 'a'..'z', 'A'..'Z', 0..9;
+  $session{vnc_token} = rndStr 8, 'a'..'z', 'A'..'Z', 0..9;
 } else {
-  $session{novnc_token} = "";
+  $session{vnc_token} = "";
 }
 
 # ------------------------------------------------------------------------------
@@ -236,7 +252,8 @@ for ('machine','persistent','user','password','cpu','memory','video') {
 
 if ($cgi_undef > 3) {
   # many undefs from CGI: no HTML form connected: running as detached script
-  print STDERR "Running as detached script.\n";
+  print STDERR "Running as detached script. No token.\n";
+  $session{vnc_token} = "";
 }
 
 # ------------------------------------------------------------------------------
@@ -294,11 +311,23 @@ if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|tr
   $session{persistent} = "";
 }
 
-{ # find a free port on server (127.0.0.2)
+{ # find a free port for noVNC on server
   my $socket = IO::Socket::INET->new(Proto => 'tcp', LocalAddr => $session{qemuvnc_ip});
   $session{port} = $socket->sockport();
   $socket->close;
 }
+my $vnc_port = undef;
+# find a another free VNC port at qemuvnc_ip
+for my $port (5900..6000) {
+  my $socket = IO::Socket::IP->new(PeerAddr => $session{qemuvnc_ip}, PeerPort => $port);
+  if (not $socket) { 
+    $vnc_port = $port;
+    last;
+  } else { $socket->close; }
+}
+if (not defined($vnc_port)) {
+  $error .= "Can not find a port for the display.\n";
+} 
 
 # ==============================================================================
 # DO the work
@@ -337,25 +366,26 @@ if (not $error) {
   
   # common options for QEMU
   my $cmd = 
-  $cmd = "$config{qemu_exec} -hda $session{snapshot} -smp $session{cpu}"
-    . " -m $session{memory} -machine pc,accel=kvm -enable-kvm"
-    . " -net user -net nic,model=ne2k_pci -cpu host -vga $session{video}";
-  
+  $cmd = "$config{qemu_exec}"
+    . " -hda $session{snapshot} -smp $session{cpu} -m $session{memory}"
+    . " -machine pc,accel=kvm -enable-kvm -cpu host"
+    . " -net user -net nic,model=ne2k_pci -vga $session{video}";
   if ($session{machine} =~ /\.iso$/i) {
     $cmd .= " -boot d -cdrom $config{dir_machines}/$session{machine}";
   } else {
     $cmd .= " -boot c";
   }
-  $cmd .= " -vnc $session{qemuvnc_ip}:1";
+  my $vnc_port_5900=$vnc_port-5900;
+  $cmd .= " -vnc $session{qemuvnc_ip}:$vnc_port_5900";
   
   my ($token_handle, $token_name) = tempfile(UNLINK => 1);
-  if ($session{novnc_token}) {
+  if ($session{vnc_token}) {
     # must avoid output to STDOUT, so redirect STDOUT to NULL.
     #   file created just for the launch, removed immediately. 
-    #   Any 'pipe' such as "echo 'change vnc password\n$novnc_token\n' | qemu ..." is shown in 'ps'.
+    #   Any 'pipe' such as "echo 'change vnc password\n$vnc_token\n' | qemu ..." is shown in 'ps'.
     #   With a temp file and redirection, the token does not appear in the process list (ps).
 
-    print $token_handle "change vnc password\n$session{novnc_token}\n";
+    print $token_handle "change vnc password\n$session{vnc_token}\n";
     close($token_handle);
     # redirect 'token' to QEMU monitor STDIN to set the VNC password
     $cmd .= ",password -monitor stdio > /dev/null < $token_name";
@@ -374,7 +404,7 @@ if (not $error) {
 my $proc_novnc  = ""; # REQUIRED killed at END
 if (not $error) {
   $cmd= "$config{dir_novnc}/utils/websockify/run" .
-    " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:5901";
+    " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
   $proc_novnc = Proc::Background->new($cmd);
@@ -397,8 +427,8 @@ if (not $error) {
   
   $output .= "<li>$ok No error, all is fine.</li>\n";
   $output .= "<li><b>$ok Connect to your machine at <a href=$url target=_blank>$url</b></a>.</li>\n";
-  if ($session{novnc_token}) {
-    $output .= "<li><b>$ok Security token is: $session{novnc_token}</b></li>\n";
+  if ($session{vnc_token}) {
+    $output .= "<li><b>$ok Security token is: $session{vnc_token}</b></li>\n";
   }
   if ($config{snapshot_lifetime}) {
     my $datestring = localtime(time()+$config{snapshot_lifetime});
@@ -414,11 +444,14 @@ if (not $error) {
 
     <h1><a href=$url target=_blank>$url</a></h1>
 END_HTML
-if ($session{novnc_token}) {
-  $output .= "\n<h1>Token: $session{novnc_token}</h1>\n\n";
+if ($session{vnc_token}) {
+  $output .= "\n<h1>Token: $session{vnc_token}</h1>\n\n";
 }
 if (not $session{persistent} =~ /yes|persistent|true|1/i) {
-  $output .= "<i>NOTE: You can only login once (non persistent).</i>\n";
+  $output .= "\n<p><i>NOTE: You can only login once (non persistent).</i></p>\n";
+} else {
+  $output .= "\n<p><i>NOTE: You can close the browser and reconnect any time "
+    . "(within life-time). Please <b>shut down the machine properly</b></i></p>.\n";
 }
 
 $output .= <<END_HTML;
