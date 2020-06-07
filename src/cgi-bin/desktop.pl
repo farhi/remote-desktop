@@ -380,6 +380,9 @@ if (not $error) {
 # save session info
 session_save(\%session);
 
+my @pid = flatten(proc_getchildren($session{pid}));
+print STDERR "$session{name} PIDs: @pid\n";
+
 # complete output message ------------------------------------------------------
 if (not $error) {
   my $url = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
@@ -505,12 +508,13 @@ sub session_stop {
   if (-e $session{json})          { unlink($session{json}); }
   
   my $now         = localtime();
-  print STDERR "[$now] stop $session{machine} started on [$session{date}] for $session{user} at $session{remote_host}.\n";
+  print STDERR "[$now] STOP $session{machine} started on [$session{date}] for $session{user}\@$session{remote_host}\n";
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
-  if ($session{pid}) {
+  {
     my @pid = flatten(proc_getchildren($session{pid}));
-    killfam('TERM', reverse sort @pid);
+    print STDERR "[$now]   Kill @pid\n";
+    killfam('TERM', reverse sort @pid); # the CGI must be last
   }
   
 } # session_stop
@@ -535,7 +539,7 @@ sub service_housekeeping {
     
     if (-d $snapshot) { # is a snapshot directory
       my $snaphot_name = fileparse($snapshot); # just the session name
-      print STDERR "housekeeping: $snapshot $cfg/$snaphot_name.json\n";
+      print STDERR "$config{service}: housekeeping: $snapshot $cfg/$snaphot_name.json\n";
       if (not -e "$cfg/$snaphot_name.json") {
         # remove orphan $snapshot (no JSON)
         rmtree( $snapshot );
@@ -610,12 +614,10 @@ sub proc_getchildren {
   for my $proc (@{$proc_table->table()}) {
     if ($proc->ppid == $parent) {
       my $child = $proc->pid;
-      print "$parent -> $child\n";
       push @pid, $child;
-      my @pid_children = proc_getchildren($child);
+      my @pid_children = flatten(proc_getchildren($child));
       push @pid, @pid_children;
-      
     }
   }
-  return @pid;
+  return flatten(@pid);
 }
