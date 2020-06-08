@@ -79,6 +79,6 @@ and enter the displayed token (to secure the VNC connection), such as:
 
 Credits
 =======
-(c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. GPL2.
+(c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
 

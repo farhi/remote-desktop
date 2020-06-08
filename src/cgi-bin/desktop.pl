@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 
-# This script is triggered by a FORM or run as a script.
+# This script is triggered by a FORM or runs as a script.
 # to test this script, launch from the project root level something like:
 #
 #   cd remote-desktop
@@ -22,10 +22,7 @@
 # sudo apt install libnet-dns-perl           libproc-background-perl 
 # sudo apt install libproc-processtable-perl libemail-valid-perl
 #
-# sudo adduser www-data kvm
-# sudo chmod 755 /etc/qemu-ifup
-#
-# (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. GPL2.
+# (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
 
 
@@ -39,8 +36,11 @@ BEGIN {
 # TODO:
 # - User credentials
 # - email
+# - monitoring
 
 # dependencies -----------------------------------------------------------------
+
+use strict;
 
 use CGI;              # use CGI.pm
 use File::Temp      qw/ tempdir tempfile /;
@@ -164,13 +164,13 @@ $config{email_passwd}             = "";
 # ------------------------------------------------------------------------------
 # update config with input arguments from the command line (when run as script)
 # ------------------------------------------------------------------------------
-for($i = 0; $i < @ARGV; $i++) {
+for(my $i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
   if(/--help|-h$/) {
     print STDERR "$0: launch a QEMU/KVM machine in a browser window.\n\n";
     print STDERR "Usage: $0 --option1=value1 ...\n\n";
     print STDERR "Valid options are:\n";
-    foreach $key (keys %config) {
+    foreach my $key (keys %config) {
       print STDERR "  --$key=VALUE [$config{$key}]\n";
     }
     die;
@@ -223,7 +223,7 @@ $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
   # cast a random token key for VNC: 8 random chars in [a-z A-Z digits]
   sub rndStr{ join'', @_[ map{ rand @_ } 1 .. shift ] };
-  $session{vnc_token} = rndStr 8, 'a'..'z', 'A'..'Z', 0..9;
+  $session{vnc_token} = rndStr (8, 'a'..'z', 'A'..'Z', 0..9);
 } else {
   $session{vnc_token} = "";
 }
@@ -234,7 +234,7 @@ if ($config{service_use_vnc_token}) {
 
 $CGI::POST_MAX  = 65535;      # max size of POST message
 my $q           = new CGI;    # create new CGI object "query"
-if ($res = $q->cgi_error()){
+if (my $res = $q->cgi_error()){
   if ($res =~ /^413\b/o) { $error .= "Maximum data limit exceeded.\n";  }
   else {                   $error .= "An unknown error has occured.\n"; }
 }
@@ -272,8 +272,6 @@ if (freemem() / 1024/1024 < $session{memory}) {
 if (not -e "$config{dir_machines}/$session{machine}") {
   $error .= "Can not find virtual machine.\n";
 }
-
-# check user credentials TODO
 
 # assemble welcome message -----------------------------------------------------
 my $ok   = '<font color=green>[OK]</font>';
@@ -365,8 +363,7 @@ my $proc_qemu  = ""; # REQUIRED killed at END
 if (not $error) {
   
   # common options for QEMU
-  my $cmd = 
-  $cmd = "$config{qemu_exec}"
+  my $cmd = "$config{qemu_exec}"
     . " -hda $session{snapshot} -smp $session{cpu} -m $session{memory}"
     . " -machine pc,accel=kvm -enable-kvm -cpu host"
     . " -net user -net nic,model=ne2k_pci -vga $session{video}";
@@ -403,7 +400,7 @@ if (not $error) {
 # LAUNCH NOVNC (do not wait for VNC to stop) -----------------------------------
 my $proc_novnc  = ""; # REQUIRED killed at END
 if (not $error) {
-  $cmd= "$config{dir_novnc}/utils/websockify/run" .
+  my $cmd = "$config{dir_novnc}/utils/websockify/run" .
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
@@ -540,7 +537,7 @@ sub session_load {
   my $file = shift;
   
   open my $fh, "<", $file;
-  $json = <$fh>;
+  my $json = <$fh>;
   close $fh;
   return decode_json($json);
 }
@@ -586,7 +583,7 @@ sub service_housekeeping {
   # clean:
   # - remove orphan snapshots (no corresponding JSON file)
   # - remove snapshots that have gone above their lifetime
-  foreach $snapshot (glob("$dir/$service"."_*")) {
+  foreach my $snapshot (glob("$dir/$service"."_*")) {
     
     if (-d $snapshot) { # is a snapshot directory
       my $snaphot_name = fileparse($snapshot); # just the session name
@@ -671,4 +668,5 @@ sub proc_getchildren {
     }
   }
   return flatten(@pid);
-}
+} # proc_getchildren
+
