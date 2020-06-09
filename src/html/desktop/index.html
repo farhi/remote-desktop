@@ -25,16 +25,6 @@ This service is a data analysis portal that allows to create a remote desktop to
 treat your data. You can tune the type of system you need. It will be displayed 
 in your browser, without any additional software for you to install.
 </p>
-<p>
-Any registered user can use this service free of charge. 
-Then, provide your user account name and password. 
-To access your account details or create such an account, go to our 
-<a href="https://sun.synchrotron-soleil.fr/sunset">SUNset</a> service.
-</p>
-<p>
-If you are not registered, just enter a valid email address below, without any 
-password.
-</p>
 
 <!-- The form -------------------------------------------------------------- -->
 <div class="container">
@@ -47,7 +37,7 @@ password.
       </div>
       <div class="col-75">
         <input type="text" id="user" name="user" 
-          placeholder="Enter your <user> local ID OR email <user@domain.org>...">
+          placeholder="Enter your <user> local ID...">
       </div>
     </div>
     
@@ -138,7 +128,7 @@ password.
         <input type="checkbox" id="terms" name="terms" value="terms"
           onclick="terms_changed(this)"></input>
       </div>
-      <div class="col-50">
+      <div class="col-50" style="color:green">
         <small><i>
         I will only use this service for data analysis, without any illegal activities. 
         I am aware that remote desktop instances are by nature volatile. 
@@ -159,6 +149,12 @@ password.
 
 <!-- the footer ------------------------------------------------------------ -->
 <hr>
+Any registered user can use this service free of charge. 
+Provide your user account name and password. 
+To access your account details or create such an account, go to our 
+<a href="https://sun.synchrotron-soleil.fr/sunset">SUNset</a> service.
+If you are not registered, just enter a valid email address below, without any password. You will only access single-shot session though.
+</p>
 <small>(c) 2020 
   <a href="http://www.synchrotron-soleil.fr" target="_top">SOLEIL</a> - 
   <a href="mailto:emmanuel.farhi@synchrotron-soleil.fr">Emmanuel Farhi</a>
