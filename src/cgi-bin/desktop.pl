@@ -365,7 +365,7 @@ END_HTML
   } elsif (index($authenticated, "FAILED") > -1) {
     $error  .= "User $session{user} failed authentication. Check your username / passwword."; 
   } elsif (not $authenticated) {
-    $output .= "<li><b>[WARN]</b> Service is running without authentication.</li>\n";
+    $output .= "<li><b>[WARN]</b> Service is running without user authentication.</li>\n";
     # no authentication configured...
   }
 } # authentication block
