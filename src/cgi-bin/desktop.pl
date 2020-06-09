@@ -416,7 +416,7 @@ if (not $error) {
     $res      = `$cmd`; # execute command
     $output   .= "<li>$ok Will use ISO from ";
   } else {
-    $cmd      = "qemu-img create -b $session{dir_machines}/$session{machine}"
+    $cmd      = "qemu-img create -b $config{dir_machines}/$session{machine}"
               . " -f qcow2 $session{snapshot}";
     $res      = `$cmd`; # execute command
     $output  .= "<li>$ok Creating snapshot from ";
