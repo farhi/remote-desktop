@@ -140,7 +140,7 @@ $config{service_max_instance_nb}  = 10;
 # allow re-entrant sessions. Safer with single-shot.
 #   0: non-persistent (single-shot) are lighter for the server, but limited in use.
 #   1: persistent sessions can be re-used within life-time until shutdown.
-$config{service_allow_persistent} = 0;
+$config{service_allow_persistent} = 1;
 
 # USER AUTHENTICATION ----------------------------------------------------------
 
@@ -178,13 +178,16 @@ $config{email_from}               = 'luke.skywalker@synchrotron-soleil.fr';
 $config{email_passwd}             = "";
 
 # how to check users
-$config{check_user_with_smtp}     = 0;
-$config{check_user_with_imap}     = 0;
-$config{check_user_with_ldap}     = 0;
+
 # the email authentication is less secure. Use it with caution.
 #   the only test is for an "email"-like input, but not actual valid / registered email.
 #   When used, you MUST make sure $config{service_use_vnc_token} = 1
+#   When authenticated with email, only single-shot sessions can be launched.
 $config{check_user_with_email}    = 0;  # send token via email.
+$config{check_user_with_imap}     = 0;
+$config{check_user_with_smtp}     = 0;
+$config{check_user_with_ldap}     = 0;
+
 
 # ------------------------------------------------------------------------------
 # update config with input arguments from the command line (when run as script)
@@ -343,6 +346,8 @@ END_HTML
     } else {
       $authenticated = "EMAIL";
       $output .= "<li>$ok An email will be sent to indicate the token.</li>\n";
+      $config{service_allow_persistent} = 0;
+      $session{persistent}              = 0;
     }
   }
   if (not $authenticated and $config{check_user_with_imap}) {
@@ -552,7 +557,7 @@ my $html_name = "$session{dir_snapshot}/index.html"; # removed afterwards
   # of the token.
   my $output_no_token = $output;
   if ($config{check_user_with_email}) {
-    my $rep             = "sent via email to $session{user}"
+    my $rep             = "sent via email to $session{user}";
     $output_no_token =~ s/$session{vnc_token}/$rep/g;
   }
   open my $fh, ">", $html_name;
