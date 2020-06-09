@@ -22,6 +22,9 @@
 # sudo apt install libnet-dns-perl           libproc-background-perl 
 # sudo apt install libproc-processtable-perl libemail-valid-perl
 #
+# sudo apt install libnet-smtps-perl libmail-imapclient-perl 
+# sudo apt install libnet-ldap-perl  libemail-valid-perl
+#
 # (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
 
@@ -42,7 +45,7 @@ BEGIN {
 
 use strict;
 
-use CGI;              # use CGI.pm
+use CGI;                # use CGI.pm
 use File::Temp      qw/ tempdir tempfile /;
 use File::Path      qw/ rmtree  /;
 use File::Basename  qw(fileparse);
@@ -56,8 +59,10 @@ use Proc::Background;   # libproc-background-perl   for Background->new
 use Proc::ProcessTable; # libproc-processtable-perl
 use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
 
-use Net::SMTP;          # core Perl
-
+use Net::SMTPS;         # libnet-smtps-perl         for smtp user check and emailing
+use Mail::IMAPClient;   # libmail-imapclient-perl   for imap user check
+use Net::LDAP;          # libnet-ldap-perl          for ldap user check
+use Email::Valid;       # libemail-valid-perl
 
 # ------------------------------------------------------------------------------
 # service configuration: tune for your needs
@@ -68,6 +73,8 @@ use Net::SMTP;          # core Perl
 
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
+
+# WHERE THINGS ARE -------------------------------------------------------------
 
 # name of service, used as directory and e.g. http://127.0.0.1/desktop
 $config{service}                  = "desktop";              
@@ -98,6 +105,8 @@ $config{dir_cfg}                  = File::Spec->tmpdir();
 # full path to snapshots and temporary files, full path
 $config{dir_novnc}                = "$config{dir_service}/novnc";
 
+# MACHINE DEFAULT SETTINGS -----------------------------------------------------
+
 # max session life time in sec. 1 day is 86400 s. Highly recommended.
 #   Use 0 to disable (infinite)
 $config{snapshot_lifetime}        = 86400; 
@@ -120,6 +129,8 @@ $config{qemu_exec}                = "qemu-system-x86_64";
 # QEMU video driver, can be "qxl" or "vmware"
 $config{qemu_video}               = "qxl"; 
 
+# SERVICE CONTRAINTS -----------------------------------------------------------
+
 # max amount [0-1] of CPU load. Deny service when above.
 $config{service_max_load}         = 0.8  ;
 
@@ -131,35 +142,49 @@ $config{service_max_instance_nb}  = 10;
 #   1: persistent sessions can be re-used within life-time until shutdown.
 $config{service_allow_persistent} = 0;
 
-# will allow anybody to use service (no check for ID - only on secured network).
-#   when allowed and user is empty, token is shown.
-$config{service_allow_anonymous}  = 0;
-
-# will allow users with emails to use service.
-#   when user is provided with email (and checked), the token is sent.
-$config{service_allow_emailed}    = 1; 
-
-# will allow users from LDAP to use service.
-#   when user is on an LDAP, we get the entry and associated email. token is sent.
-$config{service_allow_ldap}       = 1;
+# USER AUTHENTICATION ----------------------------------------------------------
 
 # must use token to connect (highly recommended)
 #   when false, no token is used (direct connection).
-#   To use token, but only display it (not sent), use empty 'smtp_server' below.
 $config{service_use_vnc_token}    = 1;
 
 # the name of the SMTP server, and optional port.
 #   when empty, no email is needed, token is shown.
+#   The SMTP server is used to send emails, and check user credentials.
 $config{smtp_server}              = "smtp.synchrotron-soleil.fr"; 
 
 # the SMTP port e.g. 465, 587, or left blank
-$config{smtp_port}                = ""; 
+# and indicate if SMTP uses encryption
+$config{smtp_port}                = 587; 
+$config{smtp_use_ssl}             = 'starttls'; # 'starttls' or blank
+
+# the name of the IMAP server, and optional port.
+#   when empty, no email is needed, token is shown.
+#   The IMAP server is used to check user credentials.
+$config{imap_server}              = 'sun-owa.synchrotron-soleil.fr'; 
+
+# the IMAP port e.g. 993, or left blank
+$config{imap_port}                = 993; 
+
+# the name of the LDAP server.
+#   The LDAP server is used to check user credentials.
+$config{ldap_server}              = '195.221.10.1'; 
+$config{ldap_port}                = 389; # default is 389
 
 # the email address of the sender of the messages on the SMTP server. 
 $config{email_from}               = 'luke.skywalker@synchrotron-soleil.fr';
 
 # the password for the sender on the SMTP server, or left blank when none.
 $config{email_passwd}             = "";
+
+# how to check users
+$config{check_user_with_smtp}     = 0;
+$config{check_user_with_imap}     = 0;
+$config{check_user_with_ldap}     = 0;
+# the email authentication is less secure. Use it with caution.
+#   the only test is for an "email"-like input, but not actual valid / registered email.
+#   When used, you MUST make sure $config{service_use_vnc_token} = 1
+$config{check_user_with_email}    = 0;  # send token via email.
 
 # ------------------------------------------------------------------------------
 # update config with input arguments from the command line (when run as script)
@@ -243,6 +268,7 @@ $session{remote_host} = $q->remote_host(); # the 'client'
 $session{server_name} = $q->server_name(); # the 'server'
 
 my $cgi_undef = 0;
+# these are the "input" to collect from the HTML FORM.
 for ('machine','persistent','user','password','cpu','memory','video') {
   my $val = $q->param($_);
   if (defined($val)) {
@@ -252,8 +278,13 @@ for ('machine','persistent','user','password','cpu','memory','video') {
 
 if ($cgi_undef > 3) {
   # many undefs from CGI: no HTML form connected: running as detached script
-  print STDERR "Running as detached script. No token.\n";
-  $session{vnc_token} = "";
+  print STDERR "Running as detached script. No token. No authentication.\n";
+  $session{vnc_token}             = "";
+  $config{service_use_vnc_token}  = 0;
+  $config{check_user_with_email}  = 0;
+  $config{check_user_with_ldap}   = 0;
+  $config{check_user_with_imap}   = 0;
+  $config{check_user_with_smtp}   = 0;
 }
 
 # ------------------------------------------------------------------------------
@@ -296,7 +327,44 @@ $output .= <<END_HTML;
   <hr><ul>
 END_HTML
 
-$output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
+# ------------------------------------------------------------------------------
+# User credentials checks
+# ------------------------------------------------------------------------------
+
+{ # authentication block
+  my $authenticated = "";
+  $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
+  # when all fails or is not checked, consider sending an email.
+  #   must use token
+  if (not $authenticated and $config{check_user_with_email} 
+                         and Email::Valid->address($session{user})) {
+    if (not $config{service_use_vnc_token}) {
+      $error .= "Email authentication check requires a token check as well. Wrong service configuration.";
+    } else {
+      $authenticated = "EMAIL";
+      $output .= "<li>$ok An email will be sent to indicate the token.</li>\n";
+    }
+  }
+  if (not $authenticated and $config{check_user_with_imap}) {
+    $authenticated .= session_check_imap(\%config, \%session); # checks IMAP("user","password")
+  }
+  if (not $authenticated and $config{check_user_with_smtp}) {
+    $authenticated .= session_check_smtp(\%config, \%session); # checks SMTP("user","password")
+  }
+  if (not $authenticated and $config{check_user_with_ldap}) {
+    $authenticated .= session_check_ldap(\%config, \%session); # checks LDAP("user","password")
+  }
+  # now we search for a "SUCCESS"
+  if (index($authenticated, "SUCCESS") > -1) {
+    $output .= "<li>$ok You are authenticated.</li>\n";
+  } elsif (index($authenticated, "FAILED") > -1) {
+    $error  .= "User $session{user} failed authentication. Check your username / passwword."; 
+  } elsif (not $authenticated) {
+    $output .= "<li><b>[WARN]</b> Service is running without authentication.</li>\n";
+    # no authentication configured...
+  }
+} # authentication block
+
 $output .= "<li>$ok Starting on $session{date}</li>\n";
 $output .= "<li>$ok The server name is $session{server_name}.</li>\n";
 $output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
@@ -389,7 +457,7 @@ if (not $error) {
   }
   $proc_qemu = Proc::Background->new($cmd);
   if (not $proc_qemu) {
-    $error .= "Could not start QEMU/KVM for $session{machine}.\n";
+    $error  .= "Could not start QEMU/KVM for $session{machine}.\n";
   } else {
     $output .= "<li>$ok Started QEMU/KVM for $session{machine} with VNC.</li>\n";
   }
@@ -418,7 +486,9 @@ session_save(\%session);
 my @pid = flatten(proc_getchildren($session{pid}));
 print STDERR "$session{name} PIDs: @pid\n";
 
-# complete output message ------------------------------------------------------
+# COMPLETE OUTPUT MESSAGE ------------------------------------------------------
+my $output_email="";  # this is the complete output
+                      # "output" should omit the vnc_token
 if (not $error) {
   my $url = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
   
@@ -437,7 +507,6 @@ if (not $error) {
 
     <p>Your machine $config{service} $session{machine} has just started. 
     Click on the following link and enter the associated token.</p>
-
 
     <h1><a href=$url target=_blank>$url</a></h1>
 END_HTML
@@ -460,7 +529,8 @@ $output .= <<END_HTML;
       (e.g. mounted disk, ssh/sftp, Dropbox, OwnCloud...).</li>
     <li>We recommend that you adapt the <b>screen resolution</b> of the 
       virtual machine using the bottom-left menu <i>Preferences/Monitor 
-      Settings</i>. as well as the <b>keyboard layout</b> from the <i>Preferences</i> as well.
+      Settings</i>.</li>
+    <li>We recommend that you adapt the <b>keyboard layout</b> from the <i>Preferences</i>.
     </ul></p>
     
     <hr>
@@ -476,15 +546,25 @@ END_HTML
 }
 
 # write index.html page with token ---------------------------------------------
-my $html_name = "$session{dir_snapshot}/index.html";
+my $html_name = "$session{dir_snapshot}/index.html"; # removed afterwards
 {
+  # when authentication is via sending an email, we remove all occurences 
+  # of the token.
+  my $output_no_token = $output;
+  if ($config{check_user_with_email}) {
+    my $rep             = "sent via email to $session{user}"
+    $output_no_token =~ s/$session{vnc_token}/$rep/g;
+  }
   open my $fh, ">", $html_name;
-  print $fh $output;
+  print $fh $output_no_token;
   close $fh;
 }
 
 # send message via email when possible
-# session_email(\%config, \%session, $output);
+if ($config{check_user_with_email}) {
+  # send the full output message (with token)
+  session_email(\%config, \%session, $output);
+}
 
 # display the output message (redirect) ----------------------------------------
 if ($cgi_undef > 3) {
@@ -519,7 +599,7 @@ END {
 # - session_stop: stop a session.
 # ==============================================================================
 
-# session_save($session): save session hash into a JSON.
+# session_save(\%session): save session hash into a JSON.
 sub session_save {
   my $session_ref  = shift;
   my %session = %{ $session_ref };
@@ -542,7 +622,7 @@ sub session_load {
   return decode_json($json);
 }
 
-# session_stop($session): stop given session, and remove files.
+# session_stop(\%session): stop given session, and remove files.
 sub session_stop {
   my $session_ref  = shift;
   my %session = %{ $session_ref };
@@ -567,7 +647,7 @@ sub session_stop {
   
 } # session_stop
 
-# service_housekeeping($config): scan 'snapshot' and 'cfg' directories.
+# service_housekeeping(\%config): scan 'snapshot' and 'cfg' directories.
 #   - kill over-time sessions
 #   - check that 'snapshots' have a 'cfg'.
 #   - remove orphan 'snapshots' (may be left from a hard reboot).
@@ -612,7 +692,7 @@ sub service_housekeeping {
 
 
 
-# session_email($config, $session, $output)
+# session_email(\%config, \%session, $output)
 sub session_email {
   my $config_ref  = shift;
   my %config      = %{ $config_ref };
@@ -646,6 +726,138 @@ sub session_email {
     }
   }
 } # session_email
+
+# session_check_smtp($config, $session)
+#   smtp_server, smtp_port, smtp_use_ssl are all needed.
+#   return ""         when no check is done
+#          "FAILED"   when authentication failed
+#          "SUCCESS"  when authentication succeeded
+sub session_check_smtp {
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $session_ref = shift;
+  my %session     = %{ $session_ref };
+
+  # return when check can not be done
+  if (not $config{check_user_with_smtp} or not $config{smtp_server} 
+   or not $config{smtp_port} or not $config{smtp_use_ssl}) { return ""; }
+  
+  if (not $session{user} or not $session{password}) {
+    return "FAILED: [SMTP] Missing Username/Password.";
+  }
+  
+  # must use encryption to check user.
+  my $smtps = Net::SMTPS->new($config{smtp_server}, Port => $config{smtp_port},  
+    doSSL => $config{smtp_use_ssl}, SSL_version=>'TLSv1') 
+    or return "FAILED: [SMTP] Cannot connect to server. $@"; 
+    
+  my $res="";
+
+  # when USERNAME/PW is wrong, dies with no auth.
+  if (not $smtps->auth ( $session{user}, $session{password} )) {
+    $res = "FAILED: [SMTP] Wrong username/password (failed authentication).";
+  } else { 
+    $res = "SUCCESS: [SMTP] $session{user} authenticated.";
+  }
+  
+  $smtps->quit;
+  return $res;
+  
+  
+} # session_check_smtp
+
+# session_check_imap($config, $session)
+#   imap_server, imap_port are all needed.
+#   return ""         when no check is done
+#          "FAILED"   when authentication failed
+#          "SUCCESS"  when authentication succeeded
+sub session_check_imap {
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $session_ref = shift;
+  my %session     = %{ $session_ref };
+  
+  my $res = "";
+  
+  # return when check can not be done
+  if (not $config{check_user_with_imap} or not $config{imap_server} 
+   or not $config{imap_port}) { return ""; }
+  
+  if (not $session{user} or not $session{password}) {
+    return "FAILED: [IMAP] Missing Username/Password.";
+  }
+
+  # Connect to IMAP server
+  my $client = Mail::IMAPClient->new(
+    Server   => $config{imap_server},
+    User     => $session{user},
+    Password => $session{password},
+    Port     => $config{imap_port},
+    Ssl      =>  1,
+    )
+    or return "FAILED: [IMAP] Cannot authenticate username/password. $@"; # die when not auth
+
+  # List folders on remote server (see if all is ok)
+  if ($client->IsAuthenticated()) {
+    $res = "SUCCESS: [IMAP] $session{user} authenticated.";
+  } else {
+    $res = "FAILED: [IMAP] Wrong username/password (failed authentication).";
+  }
+
+  $client->logout();
+  return $res;
+  
+} # session_check_imap
+
+# session_check_ldap($config, $session)
+#   ldap_server is needed.
+#   return ""         when no check is done
+#          "FAILED"   when authentication failed
+#          "SUCCESS"  when authentication succeeded
+
+# used: http://articles.mongueurs.net/magazines/linuxmag68.html
+sub session_check_ldap {
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $session_ref = shift;
+  my %session     = %{ $session_ref };
+
+  my $res = "";
+
+  # return when check can not be done
+  if (not $config{check_user_with_ldap} or not $config{ldap_server}
+   or not $config{ldap_port}) { return ""; }
+
+  if (not $session{user} or not $session{password}) {
+    return "FAILED: [LDAP] Missing Username/Password.";
+  }
+
+  my $ldap = Net::LDAP->new($config{ldap_server}, port=>$config{ldap_port})
+    or return "FAILED: [LDAP] Cannot connect to server. $@";
+    
+  # identify the DN
+  my $mesg = $ldap->search(
+    base => "dc=EXP",
+    filter => "cn=$session{user}",
+    attrs => ['dn']);
+  
+  foreach my $entry ($mesg->all_entries) {
+    my $dn = $entry->dn();
+    my $bmesg = $ldap->bind($dn,password=>$session{password});
+    if ( $bmesg and $bmesg->code() == 0 ) {
+      $res = "SUCCESS: [LDAP] $session{user} authenticated.";
+    }
+    else{
+      my $error = $bmesg->error();
+      $res = "FAILED: [LDAP] Wrong username/password (failed authentication). $error\n";
+    }
+  }
+  
+  $ldap->unbind;
+  return $res;
+
+} # session_check_ldap
+
 
 # proc_getchildren($pid): return all children PID's from parent.
 # use: my @children = flatten(proc_getchildren($$));
