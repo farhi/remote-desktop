@@ -67,6 +67,8 @@ sudo chmod 755 /etc/qemu-ifup
 and finally:
 ```bash
 sudo chown -R www-data /var/www/html/desktop
+sudo find /var/www/html -type f -exec chmod a+r {} +
+sudo find /var/www/html -type d -exec chmod a+rx {} +
 sudo chmod 755 /usr/lib/cgi-bin/desktop.pl
 sudo a2enmod cgi
 ```
