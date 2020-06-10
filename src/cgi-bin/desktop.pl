@@ -11,6 +11,19 @@
 # open a browser at something like:
 # - http://localhost:38443/vnc.html?host=localhost&port=38443
 #
+# The script is effectively used in two steps (when executed as a CGI):
+# - The HTML FORM launches the script as a CGI which starts the session.
+#   QEMU and VNC are initiated, the message is displayed, but does not wait for
+#   the end of the session. Instead, the same script is also launched in 
+#   background as:
+#     desktop.pl --session_watch=$json_session_file
+# - The script launched with --session_watch monitors the specified session and 
+#   clean all when done. This allows not to block the dynamic HTML rendering.
+#
+# A running session with an attached JSON file can be stopped with:
+#
+#   perl desktop.pl --session_stop=/path/to/json
+#
 # Requirements
 # ============
 # sudo apt install apache2 libapache2-mod-perl2
@@ -49,6 +62,7 @@ use CGI;                # use CGI.pm
 use File::Temp      qw/ tempdir tempfile /;
 use File::Path      qw/ rmtree  /;
 use File::Basename  qw(fileparse);
+use List::MoreUtils qw(uniq); # liblist-moreutils-perl
 use Sys::CPU;           # libsys-cpu-perl           for CPU::cpu_count
 use Sys::CpuLoad;       # libsys-cpuload-perl       for CpuLoad::load
 use JSON;               # libjson-perl              for JSON
@@ -73,6 +87,8 @@ use Email::Valid;       # libemail-valid-perl
 
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
+
+$config{version}                  = "20.06";  # yesr.month
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -192,6 +208,19 @@ $config{check_user_with_ldap}     = 0;
 # ------------------------------------------------------------------------------
 # update config with input arguments from the command line (when run as script)
 # ------------------------------------------------------------------------------
+
+# the 'session_watch' can be set from the command line to watch for the end of a
+# running session. Provide a full path to a JSON session file in 'cfg_dir'.
+# the this script will load the session info and look for the end of the 
+# associated processes. When the session ends, cleanu-up is done.
+$config{session_watch}            = ""; 
+
+# the 'service_monitor' can be set to true to generate a list of running sessions.
+# each of these can display its configuration, and be stopped/cleaned.
+$config{service_monitor}          = 0;
+
+$config{session_stop}             = ""; # send a json ref, stop service
+
 for(my $i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
   if(/--help|-h$/) {
@@ -201,7 +230,8 @@ for(my $i = 0; $i < @ARGV; $i++) {
     foreach my $key (keys %config) {
       print STDERR "  --$key=VALUE [$config{$key}]\n";
     }
-    die;
+    print "\n(c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.\n";
+    exit;
   } elsif (/^--(\w+)=(\w+)$/) {      # e.g. '--opt=value'
     if (exists($config{$1})) {
       $config{$1} = $2;
@@ -211,6 +241,19 @@ for(my $i = 0; $i < @ARGV; $i++) {
       $config{$1} = $2;
     } 
   }
+}
+
+if ($config{session_watch}) {
+  # wait for session to end, and clean files/PIDs.
+  session_watch($config{session_watch});
+  exit;
+}
+
+if ($config{session_stop}) {
+  # wait for session to end, and clean files/PIDs.
+  my $session_ref = session_load($config{session_stop});
+  session_stop($session_ref);
+  exit;
 }
 
 # for I/O, to generate HTML display and email content.
@@ -229,10 +272,11 @@ my %session;
 # transfer defaults
 $session{machine}     = $config{machine};
 $session{dir_snapshot}= tempdir(TEMPLATE => "$config{service}" . "_XXXXXXXX", 
-  DIR => $config{dir_snapshots}, CLEANUP => 1) || die;
+  DIR => $config{dir_snapshots}) || die;
 $session{name}        = File::Basename::fileparse($session{dir_snapshot});
 $session{snapshot}    = "$session{dir_snapshot}/$config{service}.qcow2";
 $session{json}        = "$config{dir_cfg}/$session{name}.json";
+
 $session{user}        = "";
 $session{password}    = "";
 $session{persistent}  = "";  # implies lower server load
@@ -240,12 +284,15 @@ $session{cpu}         = $config{snapshot_alloc_cpu};  # cores
 $session{memory}      = $config{snapshot_alloc_mem};  # in MB
 $session{disk}        = $config{snapshot_alloc_disk}; # only for ISO
 $session{video}       = $config{qemu_video};
+
 $session{date}        = localtime();
 # see https://www.oreilly.com/library/view/perl-cookbook/1565922433/ch11s03.html#:~:text=To%20append%20a%20new%20value,values%20for%20the%20same%20key.
 #   on how to handle arrays in a hash.
 # push new PID: push @{ $session{pid} }, 1234;
 # get PIDs:     my @pid = @{ $session{pid} };
-$session{pid}         = $$;     # we search all children in session_stop
+$session{pid}         = ();     # we search all children in session_stop
+push @{ $session{pid} }, $$;    #   add our own PID
+$session{pid_wait}    = $$;     # PID to wait for (daemon).
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
@@ -255,6 +302,8 @@ if ($config{service_use_vnc_token}) {
 } else {
   $session{vnc_token} = "";
 }
+$session{runs_as_cgi} = 1;
+$session{url}         = "";
 
 # ------------------------------------------------------------------------------
 # Update session info from CGI
@@ -272,6 +321,7 @@ $session{server_name} = $q->server_name(); # the 'server'
 
 my $cgi_undef = 0;
 # these are the "input" to collect from the HTML FORM.
+# count how many parameters are undef. All will when running as script.
 for ('machine','persistent','user','password','cpu','memory','video') {
   my $val = $q->param($_);
   if (defined($val)) {
@@ -279,10 +329,11 @@ for ('machine','persistent','user','password','cpu','memory','video') {
   } else { $cgi_undef++; }
 }
 
-if ($cgi_undef > 3) {
+if ($cgi_undef > 3) { # "3" as user,password and persistent can be left undef 
   # many undefs from CGI: no HTML form connected: running as detached script
   print STDERR "Running as detached script. No token. No authentication.\n";
   $session{vnc_token}             = "";
+  $session{runs_as_cgi}           = 0;
   $config{service_use_vnc_token}  = 0;
   $config{check_user_with_email}  = 0;
   $config{check_user_with_ldap}   = 0;
@@ -465,6 +516,7 @@ if (not $error) {
     $error  .= "Could not start QEMU/KVM for $session{machine}.\n";
   } else {
     $output .= "<li>$ok Started QEMU/KVM for $session{machine} with VNC.</li>\n";
+    push @{ $session{pid} }, $proc_qemu->pid;
   }
   sleep(1);
   unlink($token_name);
@@ -482,23 +534,35 @@ if (not $error) {
     $error .= "Could not start noVNC.\n";
   } else {
     $output .= "<li>$ok Started noVNC session $session{port}</li>\n";
+    push @{ $session{pid} }, $proc_novnc->pid;
+  }
+}
+
+# update all PIDs with children
+push @{ $session{pid} }, uniq sort flatten(proc_getchildren($$));
+
+# store the PID to wait for. Depends on persistent state.
+if (not $error and $proc_novnc and $proc_qemu) { 
+  if ($session{persistent}) { 
+    $session{pid_wait} = $proc_qemu->pid;
+  } else {
+    $session{pid_wait} = $proc_novnc->pid;
   }
 }
 
 # save session info
 session_save(\%session);
 
-my @pid = flatten(proc_getchildren($session{pid}));
-print STDERR "$session{name} PIDs: @pid\n";
+print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
 
 # COMPLETE OUTPUT MESSAGE ------------------------------------------------------
 my $output_email="";  # this is the complete output
                       # "output" should omit the vnc_token
 if (not $error) {
-  my $url = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
+  $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
   
   $output .= "<li>$ok No error, all is fine.</li>\n";
-  $output .= "<li><b>$ok Connect to your machine at <a href=$url target=_blank>$url</b></a>.</li>\n";
+  $output .= "<li><b>$ok Connect to your machine at <a href=$session{url} target=_blank>$session{url}</b></a>.</li>\n";
   if ($session{vnc_token}) {
     $output .= "<li><b>$ok Security token is: $session{vnc_token}</b></li>\n";
   }
@@ -513,7 +577,7 @@ if (not $error) {
     <p>Your machine $config{service} $session{machine} has just started. 
     Click on the following link and enter the associated token.</p>
 
-    <h1><a href=$url target=_blank>$url</a></h1>
+    <h1><a href=$session{url} target=_blank>$session{url}</a></h1>
 END_HTML
 if ($session{vnc_token}) {
   $output .= "\n<h1>Token: $session{vnc_token}</h1>\n\n";
@@ -572,9 +636,11 @@ if ($config{check_user_with_email}) {
 }
 
 # display the output message (redirect) ----------------------------------------
-if ($cgi_undef > 3) {
+if (not $session{runs_as_cgi}) {
   # detached script
-  print STDERR "$output\n";
+  print STDERR $0.": $session{name}: json:  $session{json}\n";
+  print STDERR $0.": $session{name}: URL:   $session{url}\n";
+  print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vnc_token});
 } else {
   # running from HTML FORM
   my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
@@ -585,23 +651,59 @@ if ($cgi_undef > 3) {
 # remove any local footprint of the token during exec
 if (-e $html_name)  { unlink $html_name; }
 
-# WAIT for QEMU/noVNC to end ---------------------------------------------------
-if (not $error and $proc_novnc and $proc_qemu) { 
-  if ($session{persistent}) { $proc_qemu->wait; }
-  else                      { $proc_novnc->wait; }
+# Script: WAIT for QEMU/noVNC to end // CGI: launch daemon ---------------------
+if (not $session{runs_as_cgi}) {
+  # when running as script: wait for end of processes.
+  if (not $error and $proc_novnc and $proc_qemu) { 
+    if ($session{persistent}) { $proc_qemu->wait; }
+    else                      { $proc_novnc->wait; }
+  }
+  # clean-up
+  session_stop(\%session); # remove files and kill all processes
+} else {
+  # to display the message the CGI must end. We thus start daemon in background.
+  if (not $error and $proc_novnc and $proc_qemu) { 
+    my $cmd = $0." --session_watch=$session{json}";
+    my $proc_watcher = Proc::Background->new($cmd);
+    if (not $proc_watcher) {
+      print STDERR $0.": ERROR: Could not launch daemon for $session{json}.\n";
+    }
+  } else {
+    session_stop(\%session); # error: clean
+  }
 }
 
-# final clean-up when QEMU/noVNC ends ------------------------------------------
+exit;
+
+# final clean-up in case of error
 END {
-  session_stop(\%session);
+  # session_stop(\%session);
 }
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ==============================================================================
 # support subroutines
-# - session_save: to a JSON file with snapshot name in e.g. /tmp
-# - session_load: get session from a JSON file.
-# - session_stop: stop a session.
+# - session_save:         to a JSON file with snapshot name in e.g. /tmp
+# - session_load:         get session from a JSON file.
+# - session_stop:         stop a session.
+# - session_watch:      wait for a session to end and clean-up (as daemon).
+# - session_email:        send email to user (with token).
+# - session_check_smtp:   check user credentials with SMTP.
+# - session_check_imap:   check user credentials with IMAP.
+# - session_check_ldap:   check user credentials with LDAP.
+# - service_housekeeping: clean invalid/old sessions.
 # ==============================================================================
 
 # session_save(\%session): save session hash into a JSON.
@@ -611,21 +713,42 @@ sub session_save {
   
   open my $fh, ">", $session{json};
   my $json = JSON::encode_json(\%session);
-  print STDERR "$json\n";
+  print STDERR "[$session{date}]: $json\n";
   print $fh "$json\n";
   close $fh;
 }
 
 # $session = session_load($file): load session hash from JSON.
-#   return $session
+#   return $session reference
 sub session_load {
   my $file = shift;
   
   open my $fh, "<", $file;
   my $json = <$fh>;
   close $fh;
-  return decode_json($json);
+  my $session = decode_json($json);
+  return $session;
 }
+
+sub session_watch {
+  my $file = shift;
+  
+  if (not -e $file) {
+    print STDERR $0.": ERROR: session $file does not exist.\n";
+  } else {
+    print STDERR $0.": Watching json: $file\n";
+    my $session_ref = session_load($file);
+    my %session = %{ $session_ref };
+    
+    my $found = 1;
+    while ($found) {
+      $found = proc_running($session{pid_wait});
+      sleep(10);
+    }
+    # we exit when the PID is not found.
+    session_stop(\%session);
+  }
+} # session_watch
 
 # session_stop(\%session): stop given session, and remove files.
 sub session_stop {
@@ -644,11 +767,13 @@ sub session_stop {
   }
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
-  if ($session{pid}) {
-    my @pid = flatten(proc_getchildren($session{pid}));
-    print STDERR "[$now]   Kill @pid\n";
-    killfam('TERM', reverse sort @pid); # the CGI must be last
-  }
+  # sometimes, PID's can change (more forks e.g. by websocket)
+  my @pids = @{ $session{pid} };
+  print STDERR "[$now]   Kill @pids\n";
+  map {
+    my @all = flatten(proc_getchildren($_));  # get all children from that PID
+    killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
+  } reverse uniq sort @pids;
   
 } # session_stop
 
@@ -679,8 +804,8 @@ sub service_housekeeping {
       } elsif ($config{snapshot_lifetime} 
           and time > (stat $snapshot)[9] + $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
-        my %session = session_load($snapshot);
-        session_stop(\%session);
+        my $session_ref = session_load("$cfg/$snaphot_name.json");
+        session_stop($session_ref);
       }
     }
   }
@@ -863,7 +988,6 @@ sub session_check_ldap {
 
 } # session_check_ldap
 
-
 # proc_getchildren($pid): return all children PID's from parent.
 # use: my @children = flatten(proc_getchildren($$));
 sub flatten {
@@ -886,4 +1010,22 @@ sub proc_getchildren {
   }
   return flatten(@pid);
 } # proc_getchildren
+
+# proc_running($pid): checks if $pid is running. 
+#   return 0 or 1 (running).
+sub proc_running {
+  my $pid= shift;
+  if (not $pid) { return 0; }
+  
+  my $found = 0; # we now search for the PID.
+  my $proc_table=Proc::ProcessTable->new();
+  for my $proc (@{$proc_table->table()}) {
+    if ($proc->pid == $pid) {
+      # session is still running
+      $found = $pid;
+      last;
+    }
+  }
+  return $found;
+} # proc_running
 
