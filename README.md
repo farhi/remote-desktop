@@ -46,13 +46,7 @@ Install required packages. On a Debian-class system:
 ```bash
 sudo apt install apache2 libapache2-mod-perl2
 sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
-
-sudo apt install libcgi-pm-perl
-sudo apt install libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl
-sudo apt install libnet-dns-perl libproc-background-perl 
-sudo apt install libproc-processtable-perl libemail-valid-perl
-sudo apt install libnet-smtps-perl libmail-imapclient-perl 
-sudo apt install libnet-ldap-perl libemail-valid-perl
+sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl libnet-dns-perl libproc-background-perl  libproc-processtable-perl libemail-valid-perl libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl
 ```
 
 Then make sure all is set-up:

@@ -256,7 +256,9 @@ if ($config{session_watch}) {
 if ($config{session_stop}) {
   # wait for session to end, and clean files/PIDs.
   my $session_ref = session_load(\%config, $config{session_stop});
-  session_stop($session_ref);
+  if ($session_ref) {
+    session_stop($session_ref);
+  }
   exit;
 }
 
@@ -297,6 +299,7 @@ $session{date}        = localtime();
 $session{pid}         = ();     # we search all children in session_stop
 push @{ $session{pid} }, $$;    #   add our own PID
 $session{pid_wait}    = $$;     # PID to wait for (daemon).
+$session{pid_wait2}   = "";     # a second filter to search for PID's
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
@@ -514,6 +517,10 @@ if (not $error) {
     # redirect 'token' to QEMU monitor STDIN to set the VNC password
     $cmd .= ",password -monitor stdio > /dev/null < $token_name";
   }
+  
+  # as stated in 
+  # https://stackoverflow.com/questions/6024472/start-background-process-daemon-from-cgi-script
+  # it is probably better to use 'batch' to launch background tasks.
   $proc_qemu = Proc::Background->new($cmd);
   if (not $proc_qemu) {
     $error  .= "Could not start QEMU/KVM for $session{machine}.\n";
@@ -528,7 +535,11 @@ if (not $error) {
 # LAUNCH NOVNC (do not wait for VNC to stop) -----------------------------------
 my $proc_novnc  = ""; # REQUIRED killed at END
 if (not $error) {
+  # we set a timeout for 1st connection, to make sure the session does not block
+  # resources. Also, by setting a log record to the snapshot, we can add the 
+  # session name to the process command line. Used for parsing PIDs.
   my $cmd = "$config{dir_novnc}/utils/websockify/run" .
+    " --timeout=300 --record=$session{dir_snapshot}/websocket.log" .
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
@@ -536,7 +547,7 @@ if (not $error) {
   if (not $proc_novnc) {
     $error .= "Could not start noVNC.\n";
   } else {
-    $output .= "<li>$ok Started noVNC session $session{port}</li>\n";
+    $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min)</li>\n";
     push @{ $session{pid} }, $proc_novnc->pid;
   }
 }
@@ -545,19 +556,23 @@ if (not $error) {
 push @{ $session{pid} }, uniq sort flatten(proc_getchildren($$));
 
 # store the PID to wait for. Depends on persistent state.
-if (not $error and $proc_novnc and $proc_qemu) { 
-  if ($session{persistent}) { 
-    $session{pid_wait} = $proc_qemu->pid;
-  } else {
-    $session{pid_wait} = $proc_novnc->pid;
+if (not $error) {
+  if ($proc_novnc and $proc_qemu) { 
+    if ($session{persistent}) { 
+      # qemu and session{name} alow to find the PID
+      $session{pid_wait} = "qemu"; # $proc_qemu->pid;
+      $session{pid_wait2}= $session{name};
+    } else {
+      # $config{dir_novnc}/utils/websockify/run and $session{port}
+      $session{pid_wait} = "$config{dir_novnc}/utils/websockify/run"; # $proc_novnc->pid;
+      $session{pid_wait2}= $session{name};
+    }
   }
   $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
 }
 
 # save session info
 session_save(\%session);
-
-print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
 
 # COMPLETE OUTPUT MESSAGE ------------------------------------------------------
 my $output_email="";  # this is the complete output
@@ -643,6 +658,7 @@ print STDERR $0.": $session{date}: START  $session{machine} as session $session{
 print STDERR $0.": $session{name}: json:  $session{json}\n";
 print STDERR $0.": $session{name}: URL:   $session{url}\n";
 print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vnc_token});
+print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
 if ($session{runs_as_cgi}) {
   # running from HTML FORM
   my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
@@ -654,7 +670,7 @@ if ($session{runs_as_cgi}) {
 if (-e $html_name)  { unlink $html_name; }
 
 # Script: WAIT for QEMU/noVNC to end // CGI: launch daemon ---------------------
-if (not $session{runs_as_cgi}) {
+if (not $session{runs_as_cgi} and 0) {
   # when running as script: wait for end of processes.
   if (not $error and $proc_novnc and $proc_qemu) { 
     if ($session{persistent}) { $proc_qemu->wait; }
@@ -663,7 +679,7 @@ if (not $session{runs_as_cgi}) {
   # clean-up
   session_stop(\%session); # remove files and kill all processes
 } else {
-  # to display the message the CGI must end. We thus start daemon in background.
+  # We start a daemon in background to monitor processes and clean-up at end
   if (not $error and $proc_novnc and $proc_qemu) { 
     my $cmd = $0." --session_watch=$session{json}";
     my $proc_watcher = Proc::Background->new($cmd);
@@ -728,7 +744,7 @@ sub session_load {
   my %config      = %{ $config_ref };
   my $file        = shift;
   
-  if (not %config or not $file) { return; } 
+  if (not %config or not $file) { return undef; } 
   
   # we test if the given ref is partial (just session name)
   if (not -e $file) {
@@ -739,7 +755,7 @@ sub session_load {
       $file = "$file.json";
     }
   }
-  print STDERR $file;
+  if (not -e $file) { return undef; }
   
   open my $fh, "<", $file;
   my $json = <$fh>;
@@ -768,11 +784,18 @@ sub session_watch {
   } else {
     print STDERR $0.": Watching json: $file\n";
     my $session_ref = session_load(\%config, $file);
+    if (not $session_ref) { return; }
     my %session = %{ $session_ref };
     
     my $found = 1;
     while ($found) {
-      $found = proc_running($session{pid_wait});
+      if (not $session{pid_wait2}) {
+        # search for PID only
+        $found = proc_running($session{pid_wait});
+      } else {
+        # search for PID and a 2nd token in pid_wait2.
+        $found = proc_running($session{pid_wait},$session{pid_wait2});
+      }
       sleep(10);
     }
     # we exit when the PID is not found.
@@ -1058,17 +1081,23 @@ sub proc_getchildren {
 } # proc_getchildren
 
 # proc_running($pid): checks if $pid is running. 
+# input $pid can be PID number or a string to match command line.
 #   return 0 or 1 (running).
 sub proc_running {
-  my $pid= shift;
+  my $pid   = shift;
+  my $token = shift;
   if (not $pid) { return 0; }
   
   my $found = 0; # we now search for the PID.
   my $proc_table=Proc::ProcessTable->new();
-  for my $proc (@{$proc_table->table()}) {
-    if ($proc->pid == $pid) {
+  for my $proc (@{$proc_table->table()}) {     
+    if ($proc->pid =~ $pid or $proc->cmndline =~ $pid) {
       # session is still running
-      $found = $pid;
+      if (defined($token) and $proc->cmndline =~ $token) {
+        $found = $pid;
+      } elsif (not defined $token) {
+        $found = $pid;
+      }
       last;
     }
   }
