@@ -822,13 +822,7 @@ sub session_stop {
   }
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
-  # sometimes, PID's can change (more forks e.g. by websocket)
-  my @pids = @{ $session{pid} };
-  print STDERR "[$now]   Kill @pids\n";
-  map {
-    my @all = flatten(proc_getchildren($_));  # get all children from that PID
-    killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
-  } reverse uniq sort @pids;
+  proc_kill($session{name}); # kill all session-named PID's
   
 } # session_stop
 
@@ -1081,7 +1075,8 @@ sub proc_getchildren {
 } # proc_getchildren
 
 # proc_running($pid): checks if $pid is running. 
-# input $pid can be PID number or a string to match command line.
+# proc_running($pid, $token2): checks if process matching tokens is running. 
+#   input $pid can be PID number or a string to match command line.
 #   return 0 or 1 (running).
 sub proc_running {
   my $pid   = shift;
@@ -1097,6 +1092,36 @@ sub proc_running {
         $found = $pid;
       } elsif (not defined $token) {
         $found = $pid;
+      }
+      last;
+    }
+  }
+  return $found;
+} # proc_running
+
+# proc_kill($pid): kill $pid 
+# proc_kill($pid, $token2): kill process matching tokens. 
+# input $pid can be PID number or a string to match command line.
+#   return 0 or 1 (was running).
+sub proc_kill {
+  my $pid   = shift;
+  my $token = shift;
+  if (not $pid) { return 0; }
+  
+  my $found = 0; # we now search for the PID.
+  my $proc_table=Proc::ProcessTable->new();
+  for my $proc (@{$proc_table->table()}) {     
+    if ($proc->pid =~ $pid or $proc->cmndline =~ $pid) {
+      # session is still running
+      if (defined($token) and $proc->cmndline =~ $token) {
+        $found = $pid;
+        
+      } elsif (not defined $token) {
+        $found = $pid;
+      }
+      if ($found) {
+        my @all = flatten(proc_getchildren($proc->pid));
+        killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
       }
       last;
     }
