@@ -516,11 +516,15 @@ if (not $error) {
     close($token_handle);
     # redirect 'token' to QEMU monitor STDIN to set the VNC password
     $cmd .= ",password -monitor stdio > /dev/null < $token_name";
+  } else {
+    $cmd .= ' > /dev/null';
   }
   
   # as stated in 
   # https://stackoverflow.com/questions/6024472/start-background-process-daemon-from-cgi-script
   # it is probably better to use 'batch' to launch background tasks.
+  #   system("at now <<< '$cmd'")
+  # $proc_qemu = system("echo '$cmd' | at now") || "";
   $proc_qemu = Proc::Background->new($cmd);
   if (not $proc_qemu) {
     $error  .= "Could not start QEMU/KVM for $session{machine}.\n";
@@ -543,6 +547,7 @@ if (not $error) {
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
+  # $proc_novnc = system("echo '$cmd' | at now") || "";
   $proc_novnc = Proc::Background->new($cmd);
   if (not $proc_novnc) {
     $error .= "Could not start noVNC.\n";
@@ -550,7 +555,7 @@ if (not $error) {
     $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min)</li>\n";
     push @{ $session{pid} }, $proc_novnc->pid;
   }
-}
+} # LAUNCH NOVNC
 
 # update all PIDs with children
 push @{ $session{pid} }, uniq sort flatten(proc_getchildren($$));
@@ -661,8 +666,10 @@ print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vn
 print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
 if ($session{runs_as_cgi}) {
   # running from HTML FORM
-  my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
-  print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
+  # my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
+  #print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
+  print "Content-type:text/html\r\n\r\n";
+  print $output;
   sleep(5); # make sure the display comes in.
 }
 
@@ -680,7 +687,7 @@ if (not $session{runs_as_cgi} and 0) {
   session_stop(\%session); # remove files and kill all processes
 } else {
   # We start a daemon in background to monitor processes and clean-up at end
-  if (not $error and $proc_novnc and $proc_qemu) { 
+  if (not $error) { 
     my $cmd = $0." --session_watch=$session{json}";
     my $proc_watcher = Proc::Background->new($cmd);
     if (not $proc_watcher) {
