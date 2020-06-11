@@ -369,15 +369,14 @@ $output .= <<END_HTML;
   <title>$config{service}: $session{machine} [$session{server_name}]</title>
 </head>
 <body>
-  <img
-    alt="SOLEIL" title="SOLEIL"
+  <a href="http://www.synchrotron-soleil.fr" target="_top">
+    <img alt="SOLEIL" title="SOLEIL"
     src="http://$session{server_name}/desktop/images/logo_soleil.png"
-    align="left" border="0" height="64">
-  <h1>$config{service}: Remote Desktop: $session{machine}</h1>
+    align="left" border="0" height="64"></a>
   <img alt="RemoteDesktop" title="RemoteDesktop"
     src="http://$session{server_name}/desktop/images/virtualmachines.png"
     align="right" height="128" width="173">  
-  <a href="http://$session{server_name}/desktop/">Remote Desktop</a> / (c) GRADES - Synchrotron SOLEIL (2020).
+  <h1>$config{service}: Remote Desktop: $session{machine}</h1>
   <hr><ul>
 END_HTML
 
@@ -603,7 +602,7 @@ $output .= <<END_HTML;
     </ul></p>
     
     <hr>
-    <small>(c) 2020 - GRADES - Synchrotron Soleil - Thanks for using our data analysis services !</small>
+    <small><a href="http://$session{server_name}/desktop/">Remote Desktop</a> (c) 2020 - GRADES - Synchrotron Soleil - Thanks for using our data analysis services !</small>
     </body>
     </html>
 END_HTML
