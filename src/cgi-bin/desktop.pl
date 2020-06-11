@@ -20,6 +20,10 @@
 # - The script launched with --session_watch monitors the specified session and 
 #   clean all when done. This allows not to block the dynamic HTML rendering.
 #
+# A running session with an attached JSON file can be monitored with:
+#
+#   perl desktop.pl --session_watch=/path/to/json
+#
 # A running session with an attached JSON file can be stopped with:
 #
 #   perl desktop.pl --session_stop=/path/to/json
@@ -31,7 +35,7 @@
 #
 # sudo apt install libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl
 #
-# sudo apt install libcgi-pm-perl            
+# sudo apt install libcgi-pm-perl            liblist-moreutils-perl
 # sudo apt install libnet-dns-perl           libproc-background-perl 
 # sudo apt install libproc-processtable-perl libemail-valid-perl
 #
@@ -210,7 +214,7 @@ $config{check_user_with_ldap}     = 0;
 # ------------------------------------------------------------------------------
 
 # the 'session_watch' can be set from the command line to watch for the end of a
-# running session. Provide a full path to a JSON session file in 'cfg_dir'.
+# running session. Provide a full path to a JSON session file in 'dir_cfg'.
 # the this script will load the session info and look for the end of the 
 # associated processes. When the session ends, cleanu-up is done.
 $config{session_watch}            = ""; 
@@ -245,13 +249,13 @@ for(my $i = 0; $i < @ARGV; $i++) {
 
 if ($config{session_watch}) {
   # wait for session to end, and clean files/PIDs.
-  session_watch($config{session_watch});
+  session_watch(\%config, $config{session_watch});
   exit;
 }
 
 if ($config{session_stop}) {
   # wait for session to end, and clean files/PIDs.
-  my $session_ref = session_load($config{session_stop});
+  my $session_ref = session_load(\%config, $config{session_stop});
   session_stop($session_ref);
   exit;
 }
@@ -547,6 +551,7 @@ if (not $error and $proc_novnc and $proc_qemu) {
   } else {
     $session{pid_wait} = $proc_novnc->pid;
   }
+  $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
 }
 
 # save session info
@@ -558,8 +563,7 @@ print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
 my $output_email="";  # this is the complete output
                       # "output" should omit the vnc_token
 if (not $error) {
-  $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
-  
+
   $output .= "<li>$ok No error, all is fine.</li>\n";
   $output .= "<li><b>$ok Connect to your machine at <a href=$session{url} target=_blank>$session{url}</b></a>.</li>\n";
   if ($session{vnc_token}) {
@@ -635,12 +639,11 @@ if ($config{check_user_with_email}) {
 }
 
 # display the output message (redirect) ----------------------------------------
-if (not $session{runs_as_cgi}) {
-  # detached script
-  print STDERR $0.": $session{name}: json:  $session{json}\n";
-  print STDERR $0.": $session{name}: URL:   $session{url}\n";
-  print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vnc_token});
-} else {
+print STDERR $0.": $session{date}: START  $session{machine} as session $session{name}\n";
+print STDERR $0.": $session{name}: json:  $session{json}\n";
+print STDERR $0.": $session{name}: URL:   $session{url}\n";
+print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vnc_token});
+if ($session{runs_as_cgi}) {
   # running from HTML FORM
   my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
   print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
@@ -674,7 +677,7 @@ if (not $session{runs_as_cgi}) {
 
 exit;
 
-# final clean-up in case of error
+# final clean-up in case of error. Inactivated to keep data for the watcher.
 END {
   # session_stop(\%session);
 }
@@ -710,17 +713,33 @@ sub session_save {
   my $session_ref  = shift;
   my %session = %{ $session_ref };
   
+  if (not %session) { return; }
+  
   open my $fh, ">", $session{json};
   my $json = JSON::encode_json(\%session);
-  print STDERR "[$session{date}]: $json\n";
   print $fh "$json\n";
   close $fh;
 }
 
-# $session = session_load($file): load session hash from JSON.
+# $session = session_load(\%config, $file): load session hash from JSON.
 #   return $session reference
 sub session_load {
-  my $file = shift;
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $file        = shift;
+  
+  if (not %config or not $file) { return; } 
+  
+  # we test if the given ref is partial (just session name)
+  if (not -e $file) {
+     if (-e "$config{dir_cfg}/$file" or -e "$config{dir_cfg}/$file.json") {
+      $file = "$config{dir_cfg}/$file";
+    }
+    if (-e "$file.json") {
+      $file = "$file.json";
+    }
+  }
+  print STDERR $file;
   
   open my $fh, "<", $file;
   my $json = <$fh>;
@@ -729,14 +748,26 @@ sub session_load {
   return $session;
 }
 
+# session_watch(\%config, $file): monitor json file and clean-up at end.
 sub session_watch {
-  my $file = shift;
+  my $config_ref  = shift;
+  my %config      = %{ $config_ref };
+  my $file        = shift;
+  
+  if (not %config or not $file) { return; }
+  
+  # we test if the given ref is partial (just session name)
+  if (not -e $file and -e "$config{dir_cfg}/$file") {
+    $file = "$config{dir_cfg}/$file";
+  } elsif (not -e $file and -e "$config{dir_cfg}/$file.json") {
+    $file = "$config{dir_cfg}/$file.json";
+  }
   
   if (not -e $file) {
     print STDERR $0.": ERROR: session $file does not exist.\n";
   } else {
     print STDERR $0.": Watching json: $file\n";
-    my $session_ref = session_load($file);
+    my $session_ref = session_load(\%config, $file);
     my %session = %{ $session_ref };
     
     my $found = 1;
@@ -753,6 +784,8 @@ sub session_watch {
 sub session_stop {
   my $session_ref  = shift;
   my %session = %{ $session_ref };
+  
+  if (not %session) { return; }
   
   # remove directory and JSON config
   if ($session{dir_snapshot} and -e $session{dir_snapshot})  
@@ -785,6 +818,8 @@ sub service_housekeeping {
   my $config_ref  = shift;
   my %config = %{ $config_ref };
   
+  if (not %config) { return; }
+  
   my $dir     = $config{dir_snapshots};
   my $cfg     = $config{dir_cfg};
   my $service = $config{service};
@@ -803,7 +838,7 @@ sub service_housekeeping {
       } elsif ($config{snapshot_lifetime} 
           and time > (stat $snapshot)[9] + $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
-        my $session_ref = session_load("$cfg/$snaphot_name.json");
+        my $session_ref = session_load(\%config, "$cfg/$snaphot_name.json");
         session_stop($session_ref);
       }
     }
@@ -828,35 +863,44 @@ sub session_email {
   my $session_ref = shift;
   my %session     = %{ $session_ref };
   my $out         = shift;
-
-  if ($session{user} and $config{smtp_server} and $config{smtp_port}) {
-    my $smtp;
-    if ($config{smtp_port}) {
-      $smtp= Net::SMTP->new($config{smtp_server}); # e.g. port 25
-    } else {
-      $smtp= Net::SMTP->new($config{smtp_server}, Port=>$config{smtp_port});
-    }
-    if ($smtp) {
-      if ($config{email_passwd}) {
-        $smtp->auth($config{email_from},$config{email_passwd});
-      }
-      $smtp->mail($config{email_from});
-      $smtp->recipient($session{user});
-      $smtp->data();
-      $smtp->datasend("From: $config{email_from}\n");
-      $smtp->datasend("To: $session{user}\n");
-      # could add BCC to internal monitoring address $smtp->datasend("BCC: address\@example.com\n");
-      $smtp->datasend("Subject: [Desktop] Remote $session{machine} connection information\n");
-      $smtp->datasend("Content-Type: text/html; charset=\"UTF-8\" \n");
-      $smtp->datasend("\n"); # end of header
-      $smtp->datasend($out);
-      $smtp->dataend;
-      $smtp->quit;
-    }
+  
+  if (not %config or not %session or not $out) { return; }
+  if (not $session{user} or not $config{smtp_server} 
+   or not $config{smtp_port}) {
+    return;
   }
+
+  my $smtp;
+  if ( not $config{smtp_port} and not $config{smtp_use_ssl}) {
+    $smtp = Net::SMTP->new($config{smtp_server}); # e.g. port 25
+  } elsif ($config{smtp_port} and $config{smtp_use_ssl} and $config{email_passwd}) {
+    $smtp = Net::SMTPS->new($config{smtp_server}, Port => $config{smtp_port},  
+      doSSL => $config{smtp_use_ssl}, SSL_version=>'TLSv1') 
+  } else {
+    $smtp = Net::SMTP->new($config{smtp_server}, Port=>$config{smtp_port});
+  }
+  
+  if ($smtp) {
+    if ($config{email_passwd}) {
+      $smtp->auth($config{email_from},$config{email_passwd}) || return;
+    }
+    $smtp->mail($config{email_from});
+    $smtp->recipient($session{user});
+    $smtp->data();
+    $smtp->datasend("From: $config{email_from}\n");
+    $smtp->datasend("To: $session{user}\n");
+    # could add BCC to internal monitoring address $smtp->datasend("BCC: address\@example.com\n");
+    $smtp->datasend("Subject: [Desktop] Remote $session{machine} connection information\n");
+    $smtp->datasend("Content-Type: text/html; charset=\"UTF-8\" \n");
+    $smtp->datasend("\n"); # end of header
+    $smtp->datasend($out);
+    $smtp->dataend;
+    $smtp->quit;
+  }
+
 } # session_email
 
-# session_check_smtp($config, $session)
+# session_check_smtp(\%config, \%session)
 #   smtp_server, smtp_port, smtp_use_ssl are all needed.
 #   return ""         when no check is done
 #          "FAILED"   when authentication failed
@@ -866,6 +910,9 @@ sub session_check_smtp {
   my %config      = %{ $config_ref };
   my $session_ref = shift;
   my %session     = %{ $session_ref };
+  
+  if (not %config or not %session) { return; }
+  my $res="";
 
   # return when check can not be done
   if (not $config{check_user_with_smtp} or not $config{smtp_server} 
@@ -879,8 +926,6 @@ sub session_check_smtp {
   my $smtps = Net::SMTPS->new($config{smtp_server}, Port => $config{smtp_port},  
     doSSL => $config{smtp_use_ssl}, SSL_version=>'TLSv1') 
     or return "FAILED: [SMTP] Cannot connect to server. $@"; 
-    
-  my $res="";
 
   # when USERNAME/PW is wrong, dies with no auth.
   if (not $smtps->auth ( $session{user}, $session{password} )) {
@@ -892,10 +937,9 @@ sub session_check_smtp {
   $smtps->quit;
   return $res;
   
-  
 } # session_check_smtp
 
-# session_check_imap($config, $session)
+# session_check_imap(\%config, \%session)
 #   imap_server, imap_port are all needed.
 #   return ""         when no check is done
 #          "FAILED"   when authentication failed
@@ -905,7 +949,8 @@ sub session_check_imap {
   my %config      = %{ $config_ref };
   my $session_ref = shift;
   my %session     = %{ $session_ref };
-  
+
+  if (not %config or not %session) { return; }
   my $res = "";
   
   # return when check can not be done
@@ -938,7 +983,7 @@ sub session_check_imap {
   
 } # session_check_imap
 
-# session_check_ldap($config, $session)
+# session_check_ldap(\%config, \%session)
 #   ldap_server is needed.
 #   return ""         when no check is done
 #          "FAILED"   when authentication failed
@@ -951,6 +996,7 @@ sub session_check_ldap {
   my $session_ref = shift;
   my %session     = %{ $session_ref };
 
+  if (not %config or not %session) { return; }
   my $res = "";
 
   # return when check can not be done
@@ -997,6 +1043,7 @@ sub proc_getchildren {
   my $parent= shift;
   my @pid = [];
   push @pid, $parent;
+  if (not $parent) { return; }
   
   my $proc_table=Proc::ProcessTable->new();
   for my $proc (@{$proc_table->table()}) {
