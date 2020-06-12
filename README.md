@@ -89,13 +89,13 @@ Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (a
 - adapt the restrictions for using the service (number of connections, load limit).
 - adapt the user credential tests you wish to use. They are all tested one after the other, until one works.
 
+| Important options | Default | Description |
 |------------------|---------|-------------|
-|Important options | Default | Description |
-|`snapshot_lifetime` | 86400   | Time in seconds above which sessions are stopped |
-|`service_max_load`  | 0.8     | Maximal load of the machine, in 0-1 where 1 means all CPU's are used |
-|`service_max_instance_nb`| 10 | Maximum number of simultaneous sessions |
-|`service_allow_persistent`| 1 | You can disable persistent sessions, which use more resources |
-|`service_use_vnc_token`| 1 | You can disable VNC connection security here: no Token, direct access to the remote desktop |
+| `snapshot_lifetime` | 86400   | Time in seconds above which sessions are stopped |
+| `service_max_load`  | 0.8     | Maximal load of the machine, in 0-1 where 1 means all CPU's are used |
+| `service_max_instance_nb` | 10 | Maximum number of simultaneous sessions |
+| `service_allow_persistent` | 1 | You can disable persistent sessions, which use more resources |
+| `service_use_vnc_token` | 1 | You can disable VNC connection security here: no Token, direct access to the remote desktop |
 
 Place any ISO, QCOW2, VDI, VMDK virtual machine file in the `html/desktop/machines` 
 directory either local in the repo for testing, or in the HTML server e.g. at
