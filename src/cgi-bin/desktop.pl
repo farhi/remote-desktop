@@ -4,7 +4,7 @@
 # to test this script, launch from the project root level something like:
 #
 #   cd remote-desktop
-#   perl src/cgi-bin/desktop.pl --dir_service=src/html/desktop \
+#   perl src/cgi-bin/desktop.pl test --dir_service=src/html/desktop \
 #     --dir_html=src/html --dir_snapshots=/tmp
 #
 # Then follow printed instructions in the terminal:
@@ -91,9 +91,9 @@ use Email::Valid;       # libemail-valid-perl
 # ------------------------------------------------------------------------------
 
 # see http://honglus.blogspot.com/2010/08/resolving-perl-cgi-buffering-issue.html
-# $| = 1;
-# CGI->nph(1);
-my $r = undef; # shift;
+$| = 1;
+CGI->nph(1);
+my $r = shift;
 
 # NOTE: This is where you can tune the default service configuration.
 #       Adapt the path, and default VM specifications.
@@ -138,7 +138,7 @@ $config{dir_novnc}                = "$config{dir_service}/novnc";
 
 # max session life time in sec. 1 day is 86400 s. Highly recommended.
 #   Use 0 to disable (infinite)
-$config{snapshot_lifetime}        = 86400; 
+$config{snapshot_lifetime}        = 60; 
 
 # default nb of CPU per instance.
 $config{snapshot_alloc_cpu}       = 1;

@@ -46,7 +46,7 @@ Install required packages. On a Debian-class system:
 ```bash
 sudo apt install apache2 libapache2-mod-perl2
 sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
-sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl libnet-dns-perl libproc-background-perl  libproc-processtable-perl libemail-valid-perl libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl
+sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl libnet-dns-perl libproc-background-perl  libproc-processtable-perl libemail-valid-perl libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl libjson-perl
 ```
 
 Then make sure all is set-up:
@@ -58,6 +58,16 @@ sudo chmod 755 /etc/qemu-ifup
 - copy the html directory content into e.g. `/var/www/html` (Apache2 / Debian). You should now have a 'desktop' item there.
 - copy the cgi-bin directory content into e.g. `/usr/lib/cgi-bin` (Apache2 / Debian).
 
+The `cgi-bin` section of the Apache configuration file e.g. in `/etc/apache2/conf-available/serve-cgi-bin.conf` should be tuned as follows:
+```
+<Directory "/usr/lib/cgi-bin">
+  ...
+  SetHandler perl-script
+  PerlResponseHandler ModPerl::Registry
+  PerlOptions +ParseHeaders
+</Directory> 
+```
+
 and finally:
 ```bash
 sudo chown -R www-data /var/www/html/desktop
@@ -65,6 +75,7 @@ sudo find /var/www/html -type f -exec chmod a+r {} +
 sudo find /var/www/html -type d -exec chmod a+rx {} +
 sudo chmod 755 /usr/lib/cgi-bin/desktop.pl
 sudo a2enmod cgi
+sudo service apache2 restart
 ```
 
 The noVNC (1.1.0) and websockify packages are included within this project.
@@ -113,7 +124,7 @@ It is possible to test that all works by launching a Damn Small Linux distributi
 
 ```bash
 cd remote-desktop/src
-perl cgi-bin/desktop.pl --dir_service=html/desktop \
+perl cgi-bin/desktop.pl test --dir_service=html/desktop \
   --dir_html=html --dir_snapshots=/tmp --qemu_video=std
 ```
 
