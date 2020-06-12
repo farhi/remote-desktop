@@ -22,29 +22,26 @@
 #
 # A running session with an attached JSON file can be monitored with:
 #
-#   perl desktop.pl --session_watch=/path/to/json
+#   perl desktop.pl watch --session_watch=/path/to/json
 #
 # A running session with an attached JSON file can be stopped with:
 #
-#   perl desktop.pl --session_stop=/path/to/json
+#   perl desktop.pl stop --session_stop=/path/to/json
 #
 # To stop and clear all running sessions use:
 #
-#   perl desktop.pl --session_purge=1
+#   perl desktop.pl purge --dir_snapshots=/tmp  --session_purge=1
+#
 #
 # Requirements
 # ============
 # sudo apt install apache2 libapache2-mod-perl2
 # sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
 #
-# sudo apt install libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl
-#
-# sudo apt install libcgi-pm-perl            liblist-moreutils-perl
-# sudo apt install libnet-dns-perl           libproc-background-perl 
-# sudo apt install libproc-processtable-perl libemail-valid-perl
-#
-# sudo apt install libnet-smtps-perl libmail-imapclient-perl 
-# sudo apt install libnet-ldap-perl  libemail-valid-perl
+# sudo apt install libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl \
+#   libcgi-pm-perl liblist-moreutils-perl libnet-dns-perl libjson-perl\
+#   libproc-background-perl libproc-processtable-perl libemail-valid-perl \
+#   libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl 
 #
 # (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
@@ -101,7 +98,7 @@ my $r = shift;
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
 
-$config{version}                  = "20.06";  # yesr.month
+$config{version}                  = "20.06";  # year.month
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -138,7 +135,7 @@ $config{dir_novnc}                = "$config{dir_service}/novnc";
 
 # max session life time in sec. 1 day is 86400 s. Highly recommended.
 #   Use 0 to disable (infinite)
-$config{snapshot_lifetime}        = 60; 
+$config{snapshot_lifetime}        = 86400; 
 
 # default nb of CPU per instance.
 $config{snapshot_alloc_cpu}       = 1;
@@ -346,6 +343,9 @@ if ($session{remote_host} =~ "::1") {
   $session{remote_host} = "localhost";
 }
 $session{server_name} = $q->server_name(); # the 'server'
+if ($session{server_name} =~ "::1") {
+  $session{server_name} = "localhost";
+}
 
 my $cgi_undef = 0;
 # these are the "input" to collect from the HTML FORM.
@@ -379,7 +379,7 @@ if (Sys::CPU::cpu_count()-Sys::CpuLoad::load() < $session{cpu}) {
 if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() > $config{service_max_load}) {
   $error .= "Server load exceeded. Try again later.\n";
 }
-if (freemem() / 1024/1024 < $session{memory} and 0) {
+if (freemem() / 1024/1024 < $session{memory}) {
   $error .= "Not enough free memory. Try again later.\n";
 }
 if (not -e "$config{dir_machines}/$session{machine}") {
@@ -412,7 +412,7 @@ END_HTML
 # User credentials checks
 # ------------------------------------------------------------------------------
 
-{ # authentication block
+if ($session{runs_as_cgi}) { # authentication block
   my $authenticated = "";
   $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
   # when all fails or is not checked, consider sending an email.
@@ -481,6 +481,9 @@ if (not defined($vnc_port)) {
 # ==============================================================================
 # DO the work
 # ==============================================================================
+
+# NOTES: must make sure all commands redirect STDOUT to /dev/null not to collide
+# with HTML generation. We use Proc::Background to launch tasks.
 
 # Create snapshot --------------------------------------------------------------
 if (not $error) {
@@ -573,7 +576,7 @@ if (not $error) {
   if (not $proc_novnc) {
     $error .= "Could not start noVNC.\n";
   } else {
-    $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min)</li>\n";
+    $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min).</li>\n";
     push @{ $session{pid} }, $proc_novnc->pid;
   }
 } # LAUNCH NOVNC
@@ -592,7 +595,7 @@ if (not $error) {
       $session{pid_wait} = $proc_novnc->pid;
     }
   }
-  $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
+  $session{url} = "http://$session{server_name}:$session{port}/vnc.html?host=$session{server_name}&port=$session{port}";
 }
 
 # save session info
@@ -828,7 +831,15 @@ sub session_stop {
   }
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
-  proc_kill($session{name}); # kill all session-named PID's
+  # sometimes, PID's can change (more forks e.g. by websocket)
+  if ($session{pid}) {
+    my @pids = @{ $session{pid} };
+    print STDERR "[$now]   Kill @pids\n";
+    map {
+      my @all = flatten(proc_getchildren($_));  # get all children from that PID
+      killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
+    } reverse uniq sort @pids;
+  }
   
 } # session_stop
 
@@ -1087,54 +1098,18 @@ sub proc_getchildren {
 } # proc_getchildren
 
 # proc_running($pid): checks if $pid is running. 
-# proc_running($pid, $token2): checks if process matching tokens is running. 
-#   input $pid can be PID number or a string to match command line.
+#   input $pid is a PID number.
 #   return 0 or 1 (running).
 sub proc_running {
   my $pid   = shift;
-  my $token = shift;
   if (not $pid) { return 0; }
   
   my $found = 0; # we now search for the PID.
   my $proc_table=Proc::ProcessTable->new();
   for my $proc (@{$proc_table->table()}) {     
-    if ($proc->pid =~ $pid or $proc->cmndline =~ $pid) {
+    if ($proc->pid == $pid) {
       # session is still running
-      if (defined($token) and $proc->cmndline =~ $token) {
-        $found = $pid;
-      } elsif (not defined $token) {
-        $found = $pid;
-      }
-      last;
-    }
-  }
-  return $found;
-} # proc_running
-
-# proc_kill($pid): kill $pid 
-# proc_kill($pid, $token2): kill process matching tokens. 
-# input $pid can be PID number or a string to match command line.
-#   return 0 or 1 (was running).
-sub proc_kill {
-  my $pid   = shift;
-  my $token = shift;
-  if (not $pid) { return 0; }
-  
-  my $found = 0; # we now search for the PID.
-  my $proc_table=Proc::ProcessTable->new();
-  for my $proc (@{$proc_table->table()}) {     
-    if ($proc->pid =~ $pid or $proc->cmndline =~ $pid) {
-      # session is still running
-      if (defined($token) and $proc->cmndline =~ $token) {
-        $found = $pid;
-        
-      } elsif (not defined $token) {
-        $found = $pid;
-      }
-      if ($found) {
-        my @all = flatten(proc_getchildren($proc->pid));
-        killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
-      }
+      $found = $pid;
       last;
     }
   }

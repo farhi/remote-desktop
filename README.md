@@ -89,6 +89,14 @@ Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (a
 - adapt the restrictions for using the service (number of connections, load limit).
 - adapt the user credential tests you wish to use. They are all tested one after the other, until one works.
 
+|------------------|---------|-------------|
+|Important options | Default | Description |
+|`snapshot_lifetime` | 86400   | Time in seconds above which sessions are stopped |
+|`service_max_load`  | 0.8     | Maximal load of the machine, in 0-1 where 1 means all CPU's are used |
+|`service_max_instance_nb`| 10 | Maximum number of simultaneous sessions |
+|`service_allow_persistent`| 1 | You can disable persistent sessions, which use more resources |
+|`service_use_vnc_token`| 1 | You can disable VNC connection security here: no Token, direct access to the remote desktop |
+
 Place any ISO, QCOW2, VDI, VMDK virtual machine file in the `html/desktop/machines` 
 directory either local in the repo for testing, or in the HTML server e.g. at
 `/var/www/html/desktop/machines`.
@@ -134,6 +142,33 @@ Connect within a browser to the displayed IP, such as:
 - http://localhost:38443/vnc.html?host=localhost&port=38443
 
 for this test (executed as a script), there is no token to secure the VNC, as it is local.
+
+The `desktop.pl` script can be used as a command with additional arguments. The
+full list of supported options is obtained with:
+```bash
+desktop.pl help --help
+```
+**NOTE**: The first argument to `desktop.pl` is always ignored, we here use mnemonic words.
+
+You can additionally monitor a running process with:
+```bash
+desktop.pl watch --session_watch=/path/to/json
+```
+
+You can force a session to stop with:
+```bash
+desktop.pl stop --session_stop=/path/to/json
+```
+
+And you can stop and clear all sessions with:
+```bash
+desktop.pl purge --dir_snapshots=/tmp  --session_purge=1
+```
+
+For all the above commands, make sure you have to permissions to access the `dir_snapshots` and `dir_cfg` directories. You can specify these with:
+```bash
+desktop.pl  ... --dir_snapshots=/tmp --dir_cfg=/tmp
+```
 
 Usage: as a web service
 =======================
