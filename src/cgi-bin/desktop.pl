@@ -28,6 +28,10 @@
 #
 #   perl desktop.pl --session_stop=/path/to/json
 #
+# To stop and clear all running sessions use:
+#
+#   perl desktop.pl --session_purge=1
+#
 # Requirements
 # ============
 # sudo apt install apache2 libapache2-mod-perl2
@@ -54,13 +58,13 @@ BEGIN {
 }
 
 # TODO:
-# - User credentials
 # - email
 # - monitoring
 
 # dependencies -----------------------------------------------------------------
 
 use strict;
+use warnings qw( all );
 
 use CGI;                # use CGI.pm
 use File::Temp      qw/ tempdir tempfile /;
@@ -85,6 +89,11 @@ use Email::Valid;       # libemail-valid-perl
 # ------------------------------------------------------------------------------
 # service configuration: tune for your needs
 # ------------------------------------------------------------------------------
+
+# see http://honglus.blogspot.com/2010/08/resolving-perl-cgi-buffering-issue.html
+# $| = 1;
+# CGI->nph(1);
+my $r = undef; # shift;
 
 # NOTE: This is where you can tune the default service configuration.
 #       Adapt the path, and default VM specifications.
@@ -225,6 +234,8 @@ $config{service_monitor}          = 0;
 
 $config{session_stop}             = ""; # send a json ref, stop service
 
+$config{session_purge}            = 0;  # when true stop/clean all
+
 for(my $i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
   if(/--help|-h$/) {
@@ -259,6 +270,13 @@ if ($config{session_stop}) {
   if ($session_ref) {
     session_stop($session_ref);
   }
+  exit;
+}
+
+if ($config{session_purge}) {
+  # clean all remaining processes
+  $config{snapshot_lifetime} = 1;
+  service_housekeeping(\%config);
   exit;
 }
 
@@ -299,7 +317,6 @@ $session{date}        = localtime();
 $session{pid}         = ();     # we search all children in session_stop
 push @{ $session{pid} }, $$;    #   add our own PID
 $session{pid_wait}    = $$;     # PID to wait for (daemon).
-$session{pid_wait2}   = "";     # a second filter to search for PID's
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
@@ -318,12 +335,16 @@ $session{url}         = "";
 
 $CGI::POST_MAX  = 65535;      # max size of POST message
 my $q           = new CGI;    # create new CGI object "query"
+
 if (my $res = $q->cgi_error()){
   if ($res =~ /^413\b/o) { $error .= "Maximum data limit exceeded.\n";  }
   else {                   $error .= "An unknown error has occured.\n"; }
 }
 
 $session{remote_host} = $q->remote_host(); # the 'client'
+if ($session{remote_host} =~ "::1") {
+  $session{remote_host} = "localhost";
+}
 $session{server_name} = $q->server_name(); # the 'server'
 
 my $cgi_undef = 0;
@@ -358,7 +379,7 @@ if (Sys::CPU::cpu_count()-Sys::CpuLoad::load() < $session{cpu}) {
 if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() > $config{service_max_load}) {
   $error .= "Server load exceeded. Try again later.\n";
 }
-if (freemem() / 1024/1024 < $session{memory}) {
+if (freemem() / 1024/1024 < $session{memory} and 0) {
   $error .= "Not enough free memory. Try again later.\n";
 }
 if (not -e "$config{dir_machines}/$session{machine}") {
@@ -565,12 +586,10 @@ if (not $error) {
   if ($proc_novnc and $proc_qemu) { 
     if ($session{persistent}) { 
       # qemu and session{name} alow to find the PID
-      $session{pid_wait} = "qemu"; # $proc_qemu->pid;
-      $session{pid_wait2}= $session{name};
+      $session{pid_wait} = $proc_qemu->pid;
     } else {
       # $config{dir_novnc}/utils/websockify/run and $session{port}
-      $session{pid_wait} = "$config{dir_novnc}/utils/websockify/run"; # $proc_novnc->pid;
-      $session{pid_wait2}= $session{name};
+      $session{pid_wait} = $proc_novnc->pid;
     }
   }
   $session{url} = "http://$session{remote_host}:$session{port}/vnc.html?host=$session{remote_host}&port=$session{port}";
@@ -664,45 +683,31 @@ print STDERR $0.": $session{name}: json:  $session{json}\n";
 print STDERR $0.": $session{name}: URL:   $session{url}\n";
 print STDERR $0.": $session{name}: Token: $session{vnc_token}\n" if ($session{vnc_token});
 print STDERR $0.": $session{name}: PIDs:  @{$session{pid}}\n";
+if ($error) {
+  print STDERR $0.": $session{name}: ERROR $error\n";
+}
 if ($session{runs_as_cgi}) {
   # running from HTML FORM
   # my $redirect="http://$session{server_name}/desktop/snapshots/$session{name}/index.html";
   #print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
   print "Content-type:text/html\r\n\r\n";
-  print $output;
+  print "$output\n\n";
+  if (defined($r)) { $r->rflush; }
   sleep(5); # make sure the display comes in.
 }
 
 # remove any local footprint of the token during exec
 if (-e $html_name)  { unlink $html_name; }
 
-# Script: WAIT for QEMU/noVNC to end // CGI: launch daemon ---------------------
-if (not $session{runs_as_cgi} and 0) {
-  # when running as script: wait for end of processes.
-  if (not $error and $proc_novnc and $proc_qemu) { 
-    if ($session{persistent}) { $proc_qemu->wait; }
-    else                      { $proc_novnc->wait; }
-  }
-  # clean-up
-  session_stop(\%session); # remove files and kill all processes
-} else {
-  # We start a daemon in background to monitor processes and clean-up at end
-  if (not $error) { 
-    my $cmd = $0." --session_watch=$session{json}";
-    my $proc_watcher = Proc::Background->new($cmd);
-    if (not $proc_watcher) {
-      print STDERR $0.": ERROR: Could not launch daemon for $session{json}.\n";
-    }
-  } else {
-    session_stop(\%session); # error: clean
-  }
+# wait for end of processes.
+if (not $error and $proc_novnc and $proc_qemu) { 
+	if ($session{persistent}) { $proc_qemu->wait; }
+	else                      { $proc_novnc->wait; }
 }
-
-exit;
 
 # final clean-up in case of error. Inactivated to keep data for the watcher.
 END {
-  # session_stop(\%session);
+  session_stop(\%session);
 }
 
 
@@ -734,10 +739,10 @@ END {
 # session_save(\%session): save session hash into a JSON.
 sub session_save {
   my $session_ref  = shift;
+  
+  if (not $session_ref) { return; }
   my %session = %{ $session_ref };
-  
-  if (not %session) { return; }
-  
+
   open my $fh, ">", $session{json};
   my $json = JSON::encode_json(\%session);
   print $fh "$json\n";
@@ -748,11 +753,11 @@ sub session_save {
 #   return $session reference
 sub session_load {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $file        = shift;
   
-  if (not %config or not $file) { return undef; } 
-  
+  if (not $config_ref or not $file) { return undef; } 
+  my %config      = %{ $config_ref };
+
   # we test if the given ref is partial (just session name)
   if (not -e $file) {
      if (-e "$config{dir_cfg}/$file" or -e "$config{dir_cfg}/$file.json") {
@@ -774,10 +779,10 @@ sub session_load {
 # session_watch(\%config, $file): monitor json file and clean-up at end.
 sub session_watch {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $file        = shift;
   
-  if (not %config or not $file) { return; }
+  if (not $config_ref or not $file) { return; }
+  my %config      = %{ $config_ref };
   
   # we test if the given ref is partial (just session name)
   if (not -e $file and -e "$config{dir_cfg}/$file") {
@@ -796,13 +801,7 @@ sub session_watch {
     
     my $found = 1;
     while ($found) {
-      if (not $session{pid_wait2}) {
-        # search for PID only
-        $found = proc_running($session{pid_wait});
-      } else {
-        # search for PID and a 2nd token in pid_wait2.
-        $found = proc_running($session{pid_wait},$session{pid_wait2});
-      }
+      $found = proc_running($session{pid_wait});
       sleep(10);
     }
     # we exit when the PID is not found.
@@ -813,10 +812,10 @@ sub session_watch {
 # session_stop(\%session): stop given session, and remove files.
 sub session_stop {
   my $session_ref  = shift;
+  if (not $session_ref) { return; }
+  
   my %session = %{ $session_ref };
-  
-  if (not %session) { return; }
-  
+
   # remove directory and JSON config
   if ($session{dir_snapshot} and -e $session{dir_snapshot})  
     { rmtree($session{dir_snapshot}); } 
@@ -840,10 +839,10 @@ sub session_stop {
 # return an $error string (or empty when all is OK).
 sub service_housekeeping {
   my $config_ref  = shift;
+  
+  if (not $config_ref) { return; }
   my %config = %{ $config_ref };
-  
-  if (not %config) { return; }
-  
+
   my $dir     = $config{dir_snapshots};
   my $cfg     = $config{dir_cfg};
   my $service = $config{service};
@@ -855,15 +854,19 @@ sub service_housekeeping {
     
     if (-d $snapshot) { # is a snapshot directory
       my $snaphot_name = fileparse($snapshot); # just the session name
-      print STDERR "$config{service}: housekeeping: $snapshot $cfg/$snaphot_name.json\n";
+      
       if (not -e "$cfg/$snaphot_name.json") {
         # remove orphan $snapshot (no JSON)
+        print STDERR "$config{service}: housekeeping: $snapshot\n";
         rmtree( $snapshot ) || print STDERR "Failed removing $snapshot";
       } elsif ($config{snapshot_lifetime} 
           and time > (stat $snapshot)[9] + $config{snapshot_lifetime}) { 
         # json exists, lifetime exceeded
+        print STDERR "$config{service}: housekeeping: $cfg/$snaphot_name.json\n";
         my $session_ref = session_load(\%config, "$cfg/$snaphot_name.json");
-        session_stop($session_ref);
+        if ($session_ref) {
+          session_stop($session_ref);
+        }
       }
     }
   }
@@ -873,7 +876,7 @@ sub service_housekeeping {
   my $nb    = scalar(@jsons);
   my $err   = "";
   if ($nb > $config{service_max_instance_nb}) {
-    $error = "Too many active sessions $nb. Max $config{service_max_instance_nb}. Try again later.";
+    $err = "Too many active sessions $nb. Max $config{service_max_instance_nb}. Try again later.";
   } else { $err = ""; }
   return $err;
 } # service_housekeeping
@@ -883,12 +886,12 @@ sub service_housekeeping {
 # session_email(\%config, \%session, $output)
 sub session_email {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $session_ref = shift;
-  my %session     = %{ $session_ref };
   my $out         = shift;
   
-  if (not %config or not %session or not $out) { return; }
+  if (not $config_ref or not $session_ref or not $out) { return; }
+  my %config      = %{ $config_ref };
+  my %session     = %{ $session_ref };
   if (not $session{user} or not $config{smtp_server} 
    or not $config{smtp_port}) {
     return;
@@ -931,11 +934,11 @@ sub session_email {
 #          "SUCCESS"  when authentication succeeded
 sub session_check_smtp {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $session_ref = shift;
-  my %session     = %{ $session_ref };
   
-  if (not %config or not %session) { return; }
+  if (not $config_ref or not $session_ref) { return; }
+  my %config      = %{ $config_ref };
+  my %session     = %{ $session_ref };
   my $res="";
 
   # return when check can not be done
@@ -970,11 +973,11 @@ sub session_check_smtp {
 #          "SUCCESS"  when authentication succeeded
 sub session_check_imap {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $session_ref = shift;
-  my %session     = %{ $session_ref };
 
-  if (not %config or not %session) { return; }
+  if (not $config_ref or not $session_ref) { return; }
+  my %config      = %{ $config_ref };
+  my %session     = %{ $session_ref };
   my $res = "";
   
   # return when check can not be done
@@ -1016,8 +1019,10 @@ sub session_check_imap {
 # used: http://articles.mongueurs.net/magazines/linuxmag68.html
 sub session_check_ldap {
   my $config_ref  = shift;
-  my %config      = %{ $config_ref };
   my $session_ref = shift;
+
+  if (not $config_ref or not $session_ref) { return; }
+  my %config      = %{ $config_ref };
   my %session     = %{ $session_ref };
 
   if (not %config or not %session) { return; }
