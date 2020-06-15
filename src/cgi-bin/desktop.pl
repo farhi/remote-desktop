@@ -195,13 +195,21 @@ $config{imap_port}                = 993;
 # the name of the LDAP server.
 #   The LDAP server is used to check user credentials.
 $config{ldap_server}              = '195.221.10.1'; 
-$config{ldap_port}                = 389; # default is 389
+$config{ldap_port}                = 389;    # default is 389
+$config{ldap_domain}              = 'EXP';  # DC
 
 # the email address of the sender of the messages on the SMTP server. 
 $config{email_from}               = 'luke.skywalker@synchrotron-soleil.fr';
 
 # the password for the sender on the SMTP server, or left blank when none.
 $config{email_passwd}             = "";
+
+# the method to use for sending messages. Can be:
+#   auto    use the provided smtp/email settings to decide what to do
+#   SSL     use the server, port SSL, and email_from with email_passwd
+#   simple  just use the server, and port 25
+#   port    just use the server with given port
+$config{email_method}             = "simple";
 
 # how to check users
 
@@ -218,7 +226,7 @@ $config{check_user_with_imap}     = 0;
 # https://stackoverflow.com/questions/53058362/openssl-v1-1-1-ssl-choose-client-version-unsupported-protocol
 
 $config{check_user_with_smtp}     = 0;  # works
-$config{check_user_with_ldap}     = 1;  # works, but brings many redefinition warnings
+$config{check_user_with_ldap}     = 0;  # works, but brings many redefinition warnings
 
 
 # ------------------------------------------------------------------------------
@@ -898,15 +906,32 @@ sub session_email {
     return;
   }
 
+#   auto    use the provided smtp/email settings to decide what to do
+#   SSL     use the server, port SSL, and email_from with email_passwd
+#   simple  just use the server, and port 25
+#   port    just use the server with given port
+
   my $smtp;
-  if ( not $config{smtp_port} and not $config{smtp_use_ssl}) {
-    $smtp = Net::SMTP->new($config{smtp_server}); # e.g. port 25
-  } elsif ($config{smtp_port} and $config{smtp_use_ssl} and $config{email_passwd}) {
-    $smtp = Net::SMTPS->new($config{smtp_server}, Port => $config{smtp_port},  
-      doSSL => $config{smtp_use_ssl}, SSL_version=>'TLSv1') 
-  } else {
-    $smtp = Net::SMTP->new($config{smtp_server}, Port=>$config{smtp_port});
+  my $method = $config{email_method};
+  if ($method =~ 'auto') {
+    if ( not $config{smtp_port} and not $config{smtp_use_ssl}) {
+      $method = 'simple';
+    } elsif ($config{smtp_port} and $config{smtp_use_ssl} and $config{email_passwd}) {
+      $method = 'SSL';
+    } else {
+      $method = 'port';
+    }
   }
+  
+  if ($method =~ 'SSL' and $config{smtp_port} and $config{smtp_use_ssl} 
+    and $config{email_passwd}) {
+    $smtp = Net::SMTPS->new($config{smtp_server}, Port => $config{smtp_port},  
+      doSSL => $config{smtp_use_ssl}, SSL_version=>'TLSv1');
+  } elsif ($method =~ 'port' and $config{smtp_port}) {
+    $smtp = Net::SMTP->new($config{smtp_server}, Port=>$config{smtp_port});
+  } else {
+    $smtp = Net::SMTP->new($config{smtp_server}); # e.g. port 25
+  } 
   
   if ($smtp) {
     if ($config{email_passwd}) {
@@ -1041,7 +1066,7 @@ sub session_check_ldap {
     
   # identify the DN
   my $mesg = $ldap->search(
-    base => "dc=EXP",
+    base => "dc=$config{ldap_domain}",
     filter => "cn=$session{user}",
     attrs => ['dn']);
   
