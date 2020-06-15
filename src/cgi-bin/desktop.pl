@@ -210,9 +210,15 @@ $config{email_passwd}             = "";
 #   When used, you MUST make sure $config{service_use_vnc_token} = 1
 #   When authenticated with email, only single-shot sessions can be launched.
 $config{check_user_with_email}    = 0;  # send token via email.
-$config{check_user_with_imap}     = 0;
-$config{check_user_with_smtp}     = 0;
-$config{check_user_with_ldap}     = 0;
+$config{check_user_with_imap}     = 0;  
+
+# In case of IMAP error "Unable to connect to <server>: SSL connect attempt 
+# failed error:1425F102:SSL routines:ssl_choose_client_version:unsupported protocol.
+# See:
+# https://stackoverflow.com/questions/53058362/openssl-v1-1-1-ssl-choose-client-version-unsupported-protocol
+
+$config{check_user_with_smtp}     = 0;  # works
+$config{check_user_with_ldap}     = 1;  # works, but brings many redefinition warnings
 
 
 # ------------------------------------------------------------------------------
@@ -417,7 +423,7 @@ if ($session{runs_as_cgi}) { # authentication block
   $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
   # when all fails or is not checked, consider sending an email.
   #   must use token
-  if (not $authenticated and $config{check_user_with_email} 
+  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_email} 
                          and Email::Valid->address($session{user})) {
     if (not $config{service_use_vnc_token}) {
       $error .= "Email authentication check requires a token check as well. Wrong service configuration.";
@@ -428,20 +434,20 @@ if ($session{runs_as_cgi}) { # authentication block
       $session{persistent}              = 0;
     }
   }
-  if (not $authenticated and $config{check_user_with_imap}) {
+  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_imap}) {
     $authenticated .= session_check_imap(\%config, \%session); # checks IMAP("user","password")
   }
-  if (not $authenticated and $config{check_user_with_smtp}) {
+  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_smtp}) {
     $authenticated .= session_check_smtp(\%config, \%session); # checks SMTP("user","password")
   }
-  if (not $authenticated and $config{check_user_with_ldap}) {
+  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_ldap}) {
     $authenticated .= session_check_ldap(\%config, \%session); # checks LDAP("user","password")
   }
   # now we search for a "SUCCESS"
   if (index($authenticated, "SUCCESS") > -1) {
-    $output .= "<li>$ok You are authenticated.</li>\n";
+    $output .= "<li>$ok You are authenticated: $authenticated</li>\n";
   } elsif (index($authenticated, "FAILED") > -1) {
-    $error  .= "User $session{user} failed authentication. Check your username / passwword."; 
+    $error  .= "User $session{user} failed authentication. Check your username / passwword:  $authenticated."; 
   } elsif (not $authenticated) {
     $output .= "<li><b>[WARN]</b> Service is running without user authentication.</li>\n";
     # no authentication configured...
@@ -659,25 +665,12 @@ END_HTML
   $output .= "</body></html>\n";
 }
 
-# write index.html page with token ---------------------------------------------
-my $html_name = "$session{dir_snapshot}/index.html"; # removed afterwards
-{
-  # when authentication is via sending an email, we remove all occurences 
-  # of the token.
-  my $output_no_token = $output;
-  if ($config{check_user_with_email}) {
-    my $rep             = "sent via email to $session{user}";
-    $output_no_token =~ s/$session{vnc_token}/$rep/g;
-  }
-  open my $fh, ">", $html_name;
-  print $fh $output_no_token;
-  close $fh;
-}
-
 # send message via email when possible
 if ($config{check_user_with_email}) {
   # send the full output message (with token)
   session_email(\%config, \%session, $output);
+  my $rep             = "sent via email to $session{user}";
+  $output =~ s/$session{vnc_token}/$rep/g;
 }
 
 # display the output message (redirect) ----------------------------------------
@@ -698,9 +691,6 @@ if ($session{runs_as_cgi}) {
   if (defined($r)) { $r->rflush; }
   sleep(5); # make sure the display comes in.
 }
-
-# remove any local footprint of the token during exec
-if (-e $html_name)  { unlink $html_name; }
 
 # wait for end of processes.
 if (not $error and $proc_novnc and $proc_qemu) { 
@@ -1005,8 +995,7 @@ sub session_check_imap {
     User     => $session{user},
     Password => $session{password},
     Port     => $config{imap_port},
-    Ssl      =>  1,
-    )
+    Ssl      =>  1)
     or return "FAILED: [IMAP] Cannot authenticate username/password. $@"; # die when not auth
 
   # List folders on remote server (see if all is ok)
