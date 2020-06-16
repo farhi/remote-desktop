@@ -5,7 +5,9 @@
 #
 #   cd remote-desktop
 #   perl src/cgi-bin/desktop.pl test --dir_service=src/html/desktop \
-#     --dir_html=src/html --dir_snapshots=/tmp
+#     --dir_html=src/html --dir_snapshots=/tmp \
+#     --dir_machines=src/html/desktop/machines/ 
+#     --dir_novnc=$PWD/src/html/desktop/novnc/
 #
 # Then follow printed instructions in the terminal:
 # open a browser at something like:
@@ -361,14 +363,28 @@ if ($session{server_name} =~ "::1") {
   $session{server_name} = "localhost";
 }
 
+# check input arguments values (not 'password')
+for ('machine','persistent','user','cpu','memory','video') {
+  my $val = $q->param($_);
+  if (defined($val)) {
+    if ( $val =~ /^([a-zA-Z0-9_.\-@]+)$/ ) {
+      # all is fine
+    } else {
+      $error .= "$_ contains invalid characters. ";
+    }
+  }
+}
+
 my $cgi_undef = 0;
 # these are the "input" to collect from the HTML FORM.
 # count how many parameters are undef. All will when running as script.
-for ('machine','persistent','user','password','cpu','memory','video') {
-  my $val = $q->param($_);
-  if (defined($val)) {
-    $session{$_} = $val;
-  } else { $cgi_undef++; }
+if (not $error) {
+  for ('machine','persistent','user','password','cpu','memory','video') {
+    my $val = $q->param($_);
+    if (defined($val)) {
+      $session{$_} = $val;
+    } else { $cgi_undef++; }
+  }
 }
 
 if ($cgi_undef > 3) { # "3" as user,password and persistent can be left undef 
