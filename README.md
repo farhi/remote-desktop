@@ -161,7 +161,8 @@ It is possible to test that all works by launching a Damn Small Linux distributi
 ```bash
 cd remote-desktop/src
 perl cgi-bin/desktop.pl test --dir_service=html/desktop \
-  --dir_html=html --dir_snapshots=/tmp --qemu_video=std
+  --dir_html=html --dir_snapshots=/tmp --qemu_video=std \
+  --dir_machines=html/desktop/machines/ --dir_novnc=$PWD/html/desktop/novnc/
 ```
 
 A text is displayed (HTML format) in the terminal, which indicates a URL.
