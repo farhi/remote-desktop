@@ -206,9 +206,9 @@ $config{email_passwd}             = "";
 
 # the method to use for sending messages. Can be:
 #   auto    use the provided smtp/email settings to decide what to do
-#   SSL     use the server, port SSL, and email_from with email_passwd
+#   SSL     use the SMTP server, port SSL, and email_from with email_passwd
+#   port    just use the server with given SMTP port
 #   simple  just use the server, and port 25
-#   port    just use the server with given port
 $config{email_method}             = "simple";
 
 # how to check users

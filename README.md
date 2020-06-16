@@ -6,7 +6,7 @@ What is provided by this service
 
 The service allows authorized users to launch a remote virtual machine, and display it in a browser window. No additional software installation is needed on the client side. This project has been developed on a Debian-class system, and is thus suited for it.
 
-Once installed, connect to:
+Once installed (see below), connect to:
 - http://server/desktop
 
 Basically a user can enter some login/password or email, then specify what resources are needed (cpu, memory). It is also possible to select the type of machine (system), and if the machine is accessed only once, or can be accessed many times. After accepting the Terms and Conditions, the user can click on "Create".
@@ -34,8 +34,8 @@ Features
 - Supports authentication using SMTP, IMAP, LDAP and email. See "customize" section below.
 - Checks the server load to avoid DoS. See "customize" section below.
 - Handles both single-shot login, and re-entrant (persistent) connections.
-- Persistent connections allow to close the browser and re-connect later while the machine is still running. The connection information can also be shared to allow multiple users to collaborate. Beware: each will have mouse/keyboard control, so that friendly collaboration rules must be set in place.
-- Single-shot connections only allow one single connection. Any browser closing or machine shutdown will imply to loose the virtual machine. However, this mode is lighter to handle for the server, and can be suited for e.g. tutorials and demo.
+- Persistent connections allow to close the browser and re-connect later while the session is still running. The connection information can also be shared to allow multiple users to collaborate. :warning: Beware: all users will have mouse/keyboard control, so that friendly collaboration rules must be set in place.
+- Single-shot connections only allow one single connection. Any browser closing or virtual machine shutdown will imply to loose the virtual machine. However, this mode is lighter to handle for the server, and can be suited for e.g. tutorials and demo.
 - No need to install anything on the client side.
 - The rendering of the web service is responsive design. It adapts to the browser window size.
 
@@ -89,6 +89,8 @@ Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (a
 - adapt the restrictions for using the service (number of connections, load limit).
 - adapt the user credential tests you wish to use. They are all tested one after the other, until one works.
 
+### Server load settings
+
 | Important options | Default | Description |
 |------------------|---------|-------------|
 | `snapshot_lifetime` | 86400   | Time in seconds above which sessions are stopped |
@@ -96,6 +98,31 @@ Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (a
 | `service_max_instance_nb` | 10 | Maximum number of simultaneous sessions |
 | `service_allow_persistent` | 1 | You can disable persistent sessions, which use more resources |
 | `service_use_vnc_token` | 1 | You can disable VNC connection security here: no Token, direct access to the remote desktop |
+
+### User credential settings
+
+It is possible to activate more than one authentication mechanism, which are tested until one works. The details of the SMTP, IMAP and LDAP server settings are to tune in the CGI script.
+
+| User authentication | Default | Description |
+|------------------|---------|-------------|
+| `check_user_with_email` | 0 | When set and user ID is an email, a message with the connection token is sent as authentication |
+| `check_user_with_imap` | 0 | When set, the user ID/password is checked against specified IMAP server |
+| `check_user_with_smtp` | 0 | When set, the user ID/password is checked against specified SMTP server |
+| `check_user_with_ldap` | 0 | When set, the user ID/password is checked against specified LDAP server |
+
+:warning: The SSL encryption of the IMAP server (for user credentials) should match that of the server running the remote desktop service. 
+The current Debian rules are to use SSL v1.2 or v1.3. In case the user IMAP authentication brings errors such as:
+```
+IMAP error "Unable to connect to <server>: SSL connect attempt failed error:1425F102:SSL routines:ssl_choose_client_version:unsupported protocol."
+```
+which appears in the Apache2 error log (`/var/log/apache2/error.log`), then you may [downgrade the SSL encryption](https://stackoverflow.com/questions/53058362/openssl-v1-1-1-ssl-choose-client-version-unsupported-protocol) requirement in the file `/etc/ssl/openssl.cnf` in a section such as:
+```
+[system_default_sect]
+MinProtocol = TLSv1
+CipherString = DEFAULT@SECLEVEL=1
+```
+
+### Adding virtual machines
 
 Place any ISO, QCOW2, VDI, VMDK virtual machine file in the `html/desktop/machines` 
 directory either local in the repo for testing, or in the HTML server e.g. at
@@ -119,11 +146,12 @@ and add entries to reflect the VM files in `html/machines`:
 </select>
 ```
 
-This package provides a minimal ISO for testing (in `html/desktop/machines`):
+:+1: This project provides a minimal ISO for testing (in `html/desktop/machines`):
 - [Damn Small Linux aka DSL](http://www.damnsmalllinux.org/)
 
 DSL does not properly work with modern systems. Expect strange behaviours with 
-the mouse and keyboard. Use the `std` video driver or `--qemu_video=std` option, as proposed in the local test below.
+the mouse and keyboard. Use the `std` video driver or `--qemu_video=std` option, 
+as proposed in the local test below.
 
 Usage: local (for testing)
 ==========================
@@ -148,7 +176,7 @@ full list of supported options is obtained with:
 ```bash
 desktop.pl help --help
 ```
-**NOTE**: The first argument to `desktop.pl` is always ignored, we here use mnemonic words.
+**NOTE**: The first argument to `desktop.pl` is always ignored, in the following we use fake mnemonic words.
 
 You can additionally monitor a running process with:
 ```bash
