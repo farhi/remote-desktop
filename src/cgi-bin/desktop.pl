@@ -227,8 +227,8 @@ $config{check_user_with_imap}     = 0;
 # See:
 # https://stackoverflow.com/questions/53058362/openssl-v1-1-1-ssl-choose-client-version-unsupported-protocol
 
-$config{check_user_with_smtp}     = 0;  # works
-$config{check_user_with_ldap}     = 0;  # works, but brings many redefinition warnings
+$config{check_user_with_smtp}     = 0;
+$config{check_user_with_ldap}     = 0;
 
 
 # ------------------------------------------------------------------------------
@@ -385,7 +385,7 @@ for ('machine','persistent','user','password','cpu','memory','video') {
   } else { $cgi_undef++; }
 }
 
-if ($cgi_undef > 3) { # "3" as user,password and persistent can be left undef 
+if ($cgi_undef > 4) {
   # many undefs from CGI: no HTML form connected: running as detached script
   print STDERR "Running as detached script. No token. No authentication.\n";
   $session{vnc_token}             = "";
@@ -442,13 +442,15 @@ END_HTML
 
 if ($session{runs_as_cgi}) { # authentication block
   my $authenticated = "";
-  $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
+  if (not $error) {
+    $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
+  }
   # when all fails or is not checked, consider sending an email.
   #   must use token
   if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_email} 
                          and Email::Valid->address($session{user})) {
     if (not $config{service_use_vnc_token}) {
-      $error .= "Email authentication check requires a token check as well. Wrong service configuration.";
+      $error .= "Email authentication check requires a token check as well. Wrong service configuration. Set config 'service_use_vnc_token'=1.";
     } else {
       $authenticated = "EMAIL";
       $output .= "<li>$ok An email will be sent to indicate the token.</li>\n";
@@ -630,8 +632,6 @@ if (not $error) {
 session_save(\%session);
 
 # COMPLETE OUTPUT MESSAGE ------------------------------------------------------
-my $output_email="";  # this is the complete output
-                      # "output" should omit the vnc_token
 if (not $error) {
 
   $output .= "<li>$ok No error, all is fine.</li>\n";
@@ -652,17 +652,17 @@ if (not $error) {
 
     <h1><a href=$session{url} target=_blank>$session{url}</a></h1>
 END_HTML
-if ($session{vnc_token}) {
-  $output .= "\n<h1>Token: $session{vnc_token}</h1>\n\n";
-}
-if (not $session{persistent} =~ /yes|persistent|true|1/i) {
-  $output .= "\n<p><i>NOTE: You can only login once (non persistent).</i></p>\n";
-} else {
-  $output .= "\n<p><i>NOTE: You can close the browser and reconnect any time "
-    . "(within life-time). Please <b>shut down the machine properly</b></i></p>.\n";
-}
+  if ($session{vnc_token}) {
+    $output .= "\n<h1>Token: $session{vnc_token}</h1>\n\n";
+  }
+  if (not $session{persistent} =~ /yes|persistent|true|1/i) {
+    $output .= "\n<p><i>NOTE: You can only login once (non persistent).</i></p>\n";
+  } else {
+    $output .= "\n<p><i>NOTE: You can close the browser and reconnect any time "
+      . "(within life-time). Please <b>shut down the machine properly</b></i></p>.\n";
+  }
 
-$output .= <<END_HTML;
+  $output .= <<END_HTML;
     
     <p>
     Remember that: <ul>
@@ -710,7 +710,11 @@ if ($session{runs_as_cgi}) {
   #print $q->redirect($redirect); # this works (does not wait for script to end before redirecting)
   print "Content-type:text/html\r\n\r\n";
   print "$output\n\n";
-  if (defined($r)) { $r->rflush; }
+  if (defined($r)) { 
+    eval {  # ignore error
+      $r->rflush; 
+    };
+  }
   sleep(5); # make sure the display comes in.
 }
 
