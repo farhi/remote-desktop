@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 # This script is triggered by a FORM or runs as a script.
 # to test this script, launch from the project root level something like:
@@ -24,15 +24,19 @@
 #
 # A running session with an attached JSON file can be monitored with:
 #
-#   perl desktop.pl watch --session_watch=/path/to/json
+#   perl desktop.pl --session_watch=/path/to/json
 #
 # A running session with an attached JSON file can be stopped with:
 #
-#   perl desktop.pl stop --session_stop=/path/to/json
+#   perl desktop.pl --session_stop=/path/to/json
 #
 # To stop and clear all running sessions use:
 #
-#   perl desktop.pl purge --dir_snapshots=/tmp  --session_purge=1
+#   perl desktop.pl --dir_snapshots=/tmp  --session_purge=1
+#
+# To monitor all running sessions, use:
+#
+#   perl src/cgi-bin/desktop.pl --service_monitor=1
 #
 #
 # Requirements
@@ -56,10 +60,6 @@ BEGIN {
     use CGI::Carp('fatalsToBrowser');
 }
 
-# TODO:
-# - email
-# - monitoring
-
 # dependencies -----------------------------------------------------------------
 
 use strict;
@@ -75,7 +75,7 @@ use Sys::CpuLoad;       # libsys-cpuload-perl       for CpuLoad::load
 use JSON;               # libjson-perl              for JSON
 use IO::Socket::INET;
 use IO::Socket::IP;
-use Sys::MemInfo qw(freemem);
+use Sys::MemInfo    qw(freemem totalmem);
 use Proc::Background;   # libproc-background-perl   for Background->new
 use Proc::ProcessTable; # libproc-processtable-perl
 use Proc::Killfam;      # libproc-processtable-perl for killfam (kill pid and children)
@@ -85,14 +85,20 @@ use Mail::IMAPClient;   # libmail-imapclient-perl   for imap user check
 use Net::LDAP;          # libnet-ldap-perl          for ldap user check
 use Email::Valid;       # libemail-valid-perl
 
-# ------------------------------------------------------------------------------
-# service configuration: tune for your needs
-# ------------------------------------------------------------------------------
-
 # see http://honglus.blogspot.com/2010/08/resolving-perl-cgi-buffering-issue.html
 $| = 1;
 CGI->nph(1);
+
+# use https://perl.apache.org/docs/2.0/api/Apache2/RequestIO.html
+# for flush with CGI
 my $r = shift;
+if (not $r or not $r->can("rflush")) {
+  push @ARGV, $r; # put back into ARGV when not a RequestIO object
+}
+
+# ------------------------------------------------------------------------------
+#                 service configuration: tune for your needs
+# ------------------------------------------------------------------------------
 
 # NOTE: This is where you can tune the default service configuration.
 #       Adapt the path, and default VM specifications.
@@ -100,7 +106,7 @@ my $r = shift;
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
 
-$config{version}                  = "20.06";  # year.month
+$config{version}                  = "20.06.23";  # year.month
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -139,13 +145,13 @@ $config{dir_novnc}                = "$config{dir_service}/novnc";
 #   Use 0 to disable (infinite)
 $config{snapshot_lifetime}        = 86400; 
 
-# default nb of CPU per instance.
+# default nb of CPU per session.
 $config{snapshot_alloc_cpu}       = 1;
 
-# default nb of RAM per instance (in MB).
+# default nb of RAM per session (in MB).
 $config{snapshot_alloc_mem}       = 4096.0;
 
-# default size of disk per instance (in GB). Only for ISO machines.
+# default size of disk per session (in GB). Only for ISO machines.
 $config{snapshot_alloc_disk}      = 10.0;
 
 # default machine to run
@@ -163,7 +169,7 @@ $config{qemu_video}               = "qxl";
 $config{service_max_load}         = 0.8  ;
 
 # max number of active sessions. Deny service when above.
-$config{service_max_instance_nb}  = 10;
+$config{service_max_session_nb}   = 10;
 
 # allow re-entrant sessions. Safer with single-shot.
 #   0: non-persistent (single-shot) are lighter for the server, but limited in use.
@@ -230,6 +236,14 @@ $config{check_user_with_imap}     = 0;
 $config{check_user_with_smtp}     = 0;
 $config{check_user_with_ldap}     = 0;
 
+# set the list of 'admin' users that can access the Monitoring page.
+# these must also be identified with their credentials.
+my @admin = ('picca','farhie','roudenko','bac','ounsy','bellachehab');
+$config{user_admin} = [@admin];
+
+
+
+#                        END OF SERVICE CONFIGURATION
 
 # ------------------------------------------------------------------------------
 # update config with input arguments from the command line (when run as script)
@@ -248,6 +262,8 @@ $config{service_monitor}          = 0;
 $config{session_stop}             = ""; # send a json ref, stop service
 
 $config{session_purge}            = 0;  # when true stop/clean all
+
+$config{session_nb}               = 0;
 
 for(my $i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
@@ -286,19 +302,16 @@ if ($config{session_stop}) {
   exit;
 }
 
-if ($config{session_purge}) {
-  # clean all remaining processes
-  $config{snapshot_lifetime} = 1;
-  service_housekeeping(\%config);
-  exit;
-}
-
 # for I/O, to generate HTML display and email content.
 my $error       = "";
 my $output      = "";
 
 # Check running snapshots and clean any left over.
-$error .= service_housekeeping(\%config);  # see below for private subroutines.
+{
+  (my $err, my $nb) = service_housekeeping(\%config);  # see below for private subroutines.
+  $error .= $err;
+  $config{session_nb} = $nb;
+};
 
 # ------------------------------------------------------------------------------
 # Session variables: into a hash as well.
@@ -362,6 +375,7 @@ $session{server_name} = $q->server_name(); # the 'server'
 if ($session{server_name} =~ "::1") {
   $session{server_name} = "localhost";
 }
+$config{server_name} = $session{server_name};
 
 # check input arguments values (not 'password')
 for ('machine','persistent','user','cpu','memory','video') {
@@ -370,7 +384,7 @@ for ('machine','persistent','user','cpu','memory','video') {
     if ( $val =~ /^([a-zA-Z0-9_.\-@]+)$/ ) {
       # all is fine
     } else {
-      $error .= "$_ contains invalid characters. ";
+      $error .= "$_ is not defined or contains invalid characters. ";
     }
   }
 }
@@ -397,23 +411,6 @@ if ($cgi_undef > 4) {
   $config{check_user_with_smtp}   = 0;
 }
 
-# ------------------------------------------------------------------------------
-# Session checks: cpu, memory, disk, VM
-# ------------------------------------------------------------------------------
-
-if (Sys::CPU::cpu_count()-Sys::CpuLoad::load() < $session{cpu}) {
-  $error .= "Not enough free CPU's. Try again later.\n";
-}
-if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() > $config{service_max_load}) {
-  $error .= "Server load exceeded. Try again later.\n";
-}
-if (freemem() / 1024/1024 < $session{memory}) {
-  $error .= "Not enough free memory. Try again later.\n";
-}
-if (not -e "$config{dir_machines}/$session{machine}") {
-  $error .= "Can not find virtual machine.\n";
-}
-
 # assemble welcome message -----------------------------------------------------
 my $ok   = '<font color=green>[OK]</font>';
 
@@ -436,51 +433,76 @@ $output .= <<END_HTML;
   <hr><ul>
 END_HTML
 
+# $output .= "<li>$ok Starting on $session{date}</li>\n";
+# $output .= "<li>$ok The server name is $session{server_name}.</li>\n";
+# $output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
+
+
+# service monitoring requires user authentication
+if ($session{machine} =~ 'monitor') {
+  $config{service_monitor} = 1;
+}
+
+if ($session{machine} =~ 'purge') {
+  $config{session_purge} = 1;
+}
+
+# handle 'admin'actions
+if (not $error and ($config{service_monitor} or $config{session_purge})) {
+  (my $out, my $err) = session_authenticate(\%config, \%session);
+  my $user  = $session{user};
+  my @admin = @{ $config{user_admin} };
+  if ($session{runs_as_cgi} and not $err and not grep( /^$user$/, @admin ) ) {
+    $err .= "User $user is not among the 'user_admin' list";
+  }
+  if ($err) {
+    $output .= "</ul><h1>[ERROR] $err</h1></body></html>";
+  } else {
+    if ($config{service_monitor}) {
+      $output = service_monitor(\%config, $output);
+    } elsif ($config{session_purge}) {
+      $config{snapshot_lifetime} = 1;
+      service_housekeeping(\%config);
+      $output .= '</ul><h1>OK: Purged all</h1>';
+    }
+  }
+  # display...
+  print "Content-type:text/html\r\n\r\n";
+  print "$output\n\n";
+  if (defined($r)) { 
+    eval {  # ignore error
+      $r->rflush; 
+    };
+  }
+    
+  exit;
+}
+
+# ------------------------------------------------------------------------------
+# Session checks: cpu, memory, disk, VM
+# ------------------------------------------------------------------------------
+
+if (Sys::CPU::cpu_count()-Sys::CpuLoad::load() < $session{cpu}) {
+  $error .= "Not enough free CPU's. Try again later.\n";
+}
+if (Sys::CpuLoad::load() / Sys::CPU::cpu_count() > $config{service_max_load}) {
+  $error .= "Server load exceeded. Try again later.\n";
+}
+if (freemem() / 1024/1024 < $session{memory}) {
+  $error .= "Not enough free memory. Try again later.\n";
+}
+if (not -e "$config{dir_machines}/$session{machine}") {
+  $error .= "Can not find virtual machine.\n";
+}
+
 # ------------------------------------------------------------------------------
 # User credentials checks
 # ------------------------------------------------------------------------------
-
-if ($session{runs_as_cgi}) { # authentication block
-  my $authenticated = "";
-  if (not $error) {
-    $output .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
-  }
-  # when all fails or is not checked, consider sending an email.
-  #   must use token
-  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_email} 
-                         and Email::Valid->address($session{user})) {
-    if (not $config{service_use_vnc_token}) {
-      $error .= "Email authentication check requires a token check as well. Wrong service configuration. Set config 'service_use_vnc_token'=1.";
-    } else {
-      $authenticated = "EMAIL";
-      $output .= "<li>$ok An email will be sent to indicate the token.</li>\n";
-      $config{service_allow_persistent} = 0;
-      $session{persistent}              = 0;
-    }
-  }
-  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_imap}) {
-    $authenticated .= session_check_imap(\%config, \%session); # checks IMAP("user","password")
-  }
-  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_smtp}) {
-    $authenticated .= session_check_smtp(\%config, \%session); # checks SMTP("user","password")
-  }
-  if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_ldap}) {
-    $authenticated .= session_check_ldap(\%config, \%session); # checks LDAP("user","password")
-  }
-  # now we search for a "SUCCESS"
-  if (index($authenticated, "SUCCESS") > -1) {
-    $output .= "<li>$ok You are authenticated: $authenticated</li>\n";
-  } elsif (index($authenticated, "FAILED") > -1) {
-    $error  .= "User $session{user} failed authentication. Check your username / passwword:  $authenticated."; 
-  } elsif (not $authenticated) {
-    $output .= "<li><b>[WARN]</b> Service is running without user authentication.</li>\n";
-    # no authentication configured...
-  }
-} # authentication block
-
-$output .= "<li>$ok Starting on $session{date}</li>\n";
-$output .= "<li>$ok The server name is $session{server_name}.</li>\n";
-$output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
+{
+  (my $out, my $err) = session_authenticate(\%config, \%session);
+  $output .= $out;
+  $error  .= $err;
+}
 
 if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|true|1/i) {
   $output .= "<li>$ok Using persistent session (re-entrant login).</li>\n";
@@ -583,7 +605,7 @@ if (not $error) {
   if (not $proc_qemu) {
     $error  .= "Could not start QEMU/KVM for $session{machine}.\n";
   } else {
-    $output .= "<li>$ok Started QEMU/KVM for $session{machine} with VNC.</li>\n";
+    # $output .= "<li>$ok Started QEMU/KVM for $session{machine} with VNC.</li>\n";
     push @{ $session{pid} }, $proc_qemu->pid;
   }
   sleep(1);
@@ -606,7 +628,7 @@ if (not $error) {
   if (not $proc_novnc) {
     $error .= "Could not start noVNC.\n";
   } else {
-    $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min).</li>\n";
+    # $output .= "<li>$ok Started noVNC session $session{port} (please connect within 5 min).</li>\n";
     push @{ $session{pid} }, $proc_novnc->pid;
   }
 } # LAUNCH NOVNC
@@ -634,7 +656,7 @@ session_save(\%session);
 # COMPLETE OUTPUT MESSAGE ------------------------------------------------------
 if (not $error) {
 
-  $output .= "<li>$ok No error, all is fine.</li>\n";
+  # $output .= "<li>$ok No error, all is fine.</li>\n";
   $output .= "<li><b>$ok Connect to your machine at <a href=$session{url} target=_blank>$session{url}</b></a>.</li>\n";
   if ($session{vnc_token}) {
     $output .= "<li><b>$ok Security token is: $session{vnc_token}</b></li>\n";
@@ -645,15 +667,23 @@ if (not $error) {
   }
   $output .= "</ul><hr>\n";
   $output .= <<END_HTML;
-    <p>Hello $session{user} !</p>
-
+    <h1>Hello $session{user} !</h1>
+    
     <p>Your machine $config{service} $session{machine} has just started. 
     Click on the following link and enter the associated token.</p>
-
-    <h1><a href=$session{url} target=_blank>$session{url}</a></h1>
+    
+    <div style="text-align: center;">
+      <a href=$session{url} target=_blank>
+        <img alt="$session{machine}" title="$session{machine}"
+        src="http://$session{server_name}/desktop/images/logo-system.png"
+        align="center" border="1" height="128">
+      </a>
+      <h2><a href=$session{url} target=_blank>$session{url}</a></h2>
+    </div>
+    
 END_HTML
   if ($session{vnc_token}) {
-    $output .= "\n<h1>Token: $session{vnc_token}</h1>\n\n";
+    $output .= "\n<div style='text-align: center;'><h2>Token: $session{vnc_token}</h2></div>\n\n";
   }
   if (not $session{persistent} =~ /yes|persistent|true|1/i) {
     $output .= "\n<p><i>NOTE: You can only login once (non persistent).</i></p>\n";
@@ -744,15 +774,21 @@ END {
 
 # ==============================================================================
 # support subroutines
-# - session_save:         to a JSON file with snapshot name in e.g. /tmp
-# - session_load:         get session from a JSON file.
-# - session_stop:         stop a session.
-# - session_watch:      wait for a session to end and clean-up (as daemon).
-# - session_email:        send email to user (with token).
-# - session_check_smtp:   check user credentials with SMTP.
-# - session_check_imap:   check user credentials with IMAP.
-# - session_check_ldap:   check user credentials with LDAP.
-# - service_housekeeping: clean invalid/old sessions.
+# - session_save
+# - session_load
+# - session_watch
+# - session_stop
+# - service_housekeeping
+# - service_monitor
+# - session_email
+# - session_authenticate
+# - session_check_smtp
+# - session_check_imap
+# - session_check_ldap
+# - flatten
+# - proc_getchildren
+# - proc_running
+
 # ==============================================================================
 
 # session_save(\%session): save session hash into a JSON.
@@ -843,7 +879,7 @@ sub session_stop {
   
   my $now         = localtime();
   if ($session{remote_host}) { 
-    print STDERR "[$now] STOP $session{machine} started on [$session{date}] for $session{user}\@$session{remote_host}\n";
+    print STDERR "[$now] STOP $session{name} $session{machine} started on [$session{date}] for $session{user}\@$session{remote_host}\n";
   }
   
   # make sure QEMU/noVNC and asssigned SHELLs are killed
@@ -855,6 +891,11 @@ sub session_stop {
       my @all = flatten(proc_getchildren($_));  # get all children from that PID
       killfam('TERM', reverse uniq sort @all);  # by reverse creation date/PID
     } reverse uniq sort @pids;
+    sleep(1);
+    map {
+      my @all = flatten(proc_getchildren($_));  # get all children from that PID
+      killfam('KILL', reverse uniq sort @all);  # by reverse creation date/PID
+    } reverse uniq sort @pids;
   }
   
 } # session_stop
@@ -863,7 +904,7 @@ sub session_stop {
 #   - kill over-time sessions
 #   - check that 'snapshots' have a 'cfg'.
 #   - remove orphan 'snapshots' (may be left from a hard reboot).
-# return an $error string (or empty when all is OK).
+# return ($error,$nb) string (or empty when all is OK) and number of sessions.
 sub service_housekeeping {
   my $config_ref  = shift;
   
@@ -902,13 +943,76 @@ sub service_housekeeping {
   my @jsons = glob("$cfg/$service"."_*.json");
   my $nb    = scalar(@jsons);
   my $err   = "";
-  if ($nb > $config{service_max_instance_nb}) {
-    $err = "Too many active sessions $nb. Max $config{service_max_instance_nb}. Try again later.";
+  $config{session_nb} = $nb;
+  if ($nb > $config{service_max_session_nb}) {
+    $err = "Too many active sessions $nb. Max $config{service_max_session_nb}. Try again later.";
   } else { $err = ""; }
-  return $err;
+  return ($err,$nb);
 } # service_housekeeping
 
+# service_monitor(\%config): present a list of running sessions as well as
+#   the server usage and history.
+sub service_monitor {
+  my $config_ref  = shift;
+  my $out         = shift;
+  
+  if (not $config_ref) { return; }
+  my %config = %{ $config_ref };
 
+  # first display server ID and usage
+  my $cpu_count       = Sys::CPU::cpu_count();
+  my $cpu_load        = Sys::CpuLoad::load();
+  my $load            = $cpu_load  / $cpu_count;
+  my $free_memory_GB  = freemem()  / 1024/1024/1024;
+  my $total_memory_GB = totalmem() / 1024/1024/1024;
+  
+  # display a table with current info
+  $out .= "</ul><br><hr><br><h1>Current service status</h1><table  border='1'>\n";
+  $out .= "<tr><th>Server           </th><th>$config{server_name}</th></tr>\n";
+  $out .= "<tr><td>#CPU total       </td><td>$cpu_count</td></tr>\n";
+  $out .= "<tr><td>#CPU used        </td><td>$cpu_load</td></tr>\n";
+  $out .= "<tr><td>Load [0-1]       </td><td>$load</td></tr>\n";
+  $out .= "<tr><td>Total memory (GB)</td><td>$total_memory_GB</td></tr>\n";
+  $out .= "<tr><td>Free memory (GB) </td><td>$free_memory_GB</td></tr>\n";
+  $out .= "<tr><td>Active sessions  </td><td>$config{session_nb}</td><br>\n";
+  $out .= "</table>\n";
+  
+  # build a table with a list of active sessions
+  # {name} {machine} {user} {date} {cpu} {mem} {url} {token} {PIDs}
+  my $dir     = $config{dir_snapshots};
+  my $cfg     = $config{dir_cfg};
+  my $service = $config{service};
+  
+  $out .= "<br><hr><br><h1>Current sessions [$config{session_nb}]</h1><table  border='1'>\n";
+  $out .= "<tr><th>Start Date</th><th>Name</th><th>Machine</th><th>User</th>";
+  $out .= "<th>CPU </th><th>Memory</th><th>URL</th><th>Token</th>";
+  $out .= "<th>PID's </th></tr>\n";
+  foreach my $snapshot (glob("$dir/$service"."_*")) {
+    if (-d $snapshot) { # is a snapshot directory
+      my $snaphot_name = fileparse($snapshot); # just the session name
+      if (-e "$cfg/$snaphot_name.json") {
+        my $session_ref = session_load(\%config, "$cfg/$snaphot_name.json");
+        if ($session_ref) {
+          my %session = %{ $session_ref };
+          my @pids = @{ $session{pid} };
+          $out .= "<tr>";
+          $out .= "<td>$session{date}</td>";
+          $out .= "<td>$session{name}</td>";
+          $out .= "<td>$session{machine}</td>";
+          $out .= "<td>$session{user}</td>";
+          $out .= "<td>$session{cpu}</td>";
+          $out .= "<td>$session{memory}</td>";
+          $out .= "<td><a href='$session{url}'>URL</a></td>";
+          $out .= "<td>$session{vnc_token}</td>";
+          $out .= "<td>@pids</td>\n";
+        }
+      }
+    }
+  }
+  $out .= "</table>";
+  
+  return $out;
+}
 
 # session_email(\%config, \%session, $output)
 sub session_email {
@@ -970,6 +1074,66 @@ sub session_email {
   }
 
 } # session_email
+
+# ==============================================================================
+
+# session_authenticate(\%config, \%session)
+#   check user credentials with SMTP, LDAP, IMAP and sendemail.
+#   return: ($out, $err)
+sub session_authenticate {
+
+  my $config_ref  = shift;
+  my $session_ref = shift;
+  
+  if (not $config_ref or not $session_ref) { return; }
+  my %config      = %{ $config_ref };
+  my %session     = %{ $session_ref };
+  
+  my $out = "";
+  my $err = "";
+
+  if ($session{runs_as_cgi}) { # authentication block
+    my $authenticated = "";
+    if (not $err) {
+      # $out .= "<li>$ok Hello <b>$session{user}</b> !</li>\n";
+    }
+    # when all fails or is not checked, consider sending an email.
+    #   must use token
+    if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_email} 
+                           and Email::Valid->address($session{user})) {
+      if (not $config{service_use_vnc_token}) {
+        $err .= "Email authentication check requires a token check as well. Wrong service configuration. Set config 'service_use_vnc_token'=1.";
+      } else {
+        $authenticated = "EMAIL";
+        $out .= "<li>[OK] An email will be sent to indicate the token.</li>\n";
+        $config{service_allow_persistent} = 0;
+        $session{persistent}              = 0;
+      }
+    }
+    if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_imap}) {
+      $authenticated .= session_check_imap(\%config, \%session); # checks IMAP("user","password")
+    }
+    if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_smtp}) {
+      $authenticated .= session_check_smtp(\%config, \%session); # checks SMTP("user","password")
+    }
+    if (index($authenticated, "SUCCESS") < 0 and $config{check_user_with_ldap}) {
+      $authenticated .= session_check_ldap(\%config, \%session); # checks LDAP("user","password")
+    }
+    # now we search for a "SUCCESS"
+    if (index($authenticated, "SUCCESS") > -1) {
+      # $out .= "<li>$ok You are authenticated: $authenticated</li>\n";
+    } elsif (not $authenticated) {
+      $out .= "<li><b>[WARN]</b> Service is running without user authentication.</li>\n";
+      # no authentication configured...
+    } else {
+      $err  .= "User $session{user} failed authentication. Check your username / passwword:  $authenticated."; 
+    }
+    
+    
+  } # authentication block
+  return ($out, $err);
+  
+} # session_authenticate
 
 # session_check_smtp(\%config, \%session)
 #   smtp_server, smtp_port, smtp_use_ssl are all needed.
