@@ -160,7 +160,7 @@ It is possible to test that all works by launching a Damn Small Linux distributi
 
 ```bash
 cd remote-desktop/src
-perl cgi-bin/desktop.pl test --dir_service=html/desktop \
+perl cgi-bin/desktop.pl --dir_service=html/desktop \
   --dir_html=html --dir_snapshots=/tmp --qemu_video=std \
   --dir_machines=html/desktop/machines/ --dir_novnc=$PWD/html/desktop/novnc/
 ```
@@ -175,26 +175,32 @@ for this test (executed as a script), there is no token to secure the VNC, as it
 The `desktop.pl` script can be used as a command with additional arguments. The
 full list of supported options is obtained with:
 ```bash
-desktop.pl help --help
+desktop.pl --help
 ```
-**NOTE**: The first argument to `desktop.pl` is always ignored, in the following we use fake mnemonic words.
 
 You can additionally monitor a running process with:
 ```bash
-desktop.pl watch --session_watch=/path/to/json
+desktop.pl --session_watch=/path/to/json
 ```
 
 You can force a session to stop with:
 ```bash
-desktop.pl stop --session_stop=/path/to/json
+desktop.pl --session_stop=/path/to/json
 ```
 
 And you can stop and clear all sessions with:
 ```bash
-desktop.pl purge --dir_snapshots=/tmp  --session_purge=1
+desktop.pl --session_purge=1
 ```
 
-For all the above commands, make sure you have to permissions to access the `dir_snapshots` and `dir_cfg` directories. You can specify these with:
+Last, you can monitor all running sessions, with:
+```bash
+desktop.pl --service_monitor=1 > /tmp/mon.html
+firefox /tmp/mon.html
+```
+which generates an HTML and renders it in a browser.
+
+:warning: For all the above commands, make sure you have to permissions to access the `dir_snapshots` and `dir_cfg` directories. You can specify these with:
 ```bash
 desktop.pl  ... --dir_snapshots=/tmp --dir_cfg=/tmp
 ```
