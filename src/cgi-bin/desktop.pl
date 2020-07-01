@@ -619,7 +619,7 @@ if (not $error) {
   # resources. Also, by setting a log record to the snapshot, we can add the 
   # session name to the process command line. Used for parsing PIDs.
   my $cmd = "$config{dir_novnc}/utils/websockify/run" .
-    " --timeout=300 --record=$session{dir_snapshot}/websocket.log" .
+    " --record=$session{dir_snapshot}/websocket.log" .
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
@@ -700,9 +700,10 @@ END_HTML
       Your work <b>must be saved elsewhere</b> 
       (e.g. mounted disk, ssh/sftp, Dropbox, OwnCloud...).</li>
     <li>We recommend that you adapt the <b>screen resolution</b> of the 
-      virtual machine using the bottom-left menu <i>Preferences/Monitor 
+      virtual machine using the <i>Preferences/Monitor 
       Settings</i>.</li>
-    <li>We recommend that you adapt the <b>keyboard layout</b> from the <i>Preferences</i>.
+    <li>We recommend that you adapt the <b>keyboard layout</b> from the <i>Preferences</i>.</li>
+    <li>This is also true for the <b>login-page</b> which has a layout option in the top right corner once the session has started. </li>
     </ul></p>
     
     <hr>
