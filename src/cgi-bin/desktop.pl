@@ -1127,7 +1127,7 @@ sub session_authenticate {
       $out .= "<li><b>[WARN]</b> Service is running without user authentication.</li>\n";
       # no authentication configured...
     } else {
-      $err  .= "User $session{user} failed authentication. Check your username / passwword:  $authenticated."; 
+      $err  .= "User $session{user} failed authentication. Check your username / password:  $authenticated."; 
     }
     
     
@@ -1253,15 +1253,20 @@ sub session_check_ldap {
     filter => "cn=$session{user}",
     attrs => ['dn']);
   
-  foreach my $entry ($mesg->all_entries) {
-    my $dn = $entry->dn();
-    my $bmesg = $ldap->bind($dn,password=>$session{password});
-    if ( $bmesg and $bmesg->code() == 0 ) {
-      $res = "SUCCESS: [LDAP] $session{user} authenticated.";
-    }
-    else{
-      my $error = $bmesg->error();
-      $res = "FAILED: [LDAP] Wrong username/password (failed authentication). $error\n";
+  if (not $mesg or not $mesg->count) {
+    $res = "FAILED: [LDAP] empty LDAP search.\n";
+  } else {
+  
+    foreach my $entry ($mesg->all_entries) {
+      my $dn = $entry->dn();
+      my $bmesg = $ldap->bind($dn,password=>$session{password});
+      if ( $bmesg and $bmesg->code() == 0 ) {
+        $res = "SUCCESS: [LDAP] $session{user} authenticated.";
+      }
+      else{
+        my $error = $bmesg->error();
+        $res = "FAILED: [LDAP] Wrong username/password (failed authentication). $error\n";
+      }
     }
   }
   
