@@ -1,5 +1,5 @@
 # remote-desktop
-A remote desktop service that launches virtual machines and display them in your browser
+A remote desktop service that launches virtual machines and displays them in your browser
 
 What is provided by this service
 ================================
