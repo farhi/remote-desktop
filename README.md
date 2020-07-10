@@ -38,6 +38,8 @@ Features
 - Single-shot connections only allow one single connection. Any browser closing or virtual machine shutdown will imply to loose the virtual machine. However, this mode is lighter to handle for the server, and can be suited for e.g. tutorials and demo.
 - No need to install anything on the client side.
 - The rendering of the web service is responsive design. It adapts to the browser window size.
+- Can monitor running sessions.
+- Can mount host volumes.
 
 Installation
 ============
@@ -89,6 +91,22 @@ Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (a
 - adapt the restrictions for using the service (number of connections, load limit).
 - adapt the user credential tests you wish to use. They are all tested one after the other, until one works.
 
+Most options below can be changed in the script, or overridden with command line argument `--name=value`.
+
+### Location of files and directories
+
+These settings should be kept to their default for an Apache web server.
+
+| Locations | Default | Description |
+|------------------|---------|-------------|
+| `dir_html` | /var/www/html   | HTML server root |
+| `dir_service`  | /var/www/html/desktop     | Location of service |
+| `dir_machines` | /var/www/html/desktop/machines | Full path to machines (ISO,VM) |
+| `dir_snapshots` | /var/www/html/desktop/snapshots | Where snapshot are stored |
+| `dir_cfg` | /tmp | Temporary files (JSON for sessions) |
+| `dir_novnc` | /var/www/html/desktop/novnc | Location of noVNC and websockify |
+| `dir_mounts` | (/mnt,/media) | Volumes from host to mount in guests. Use e.g. `mount -t 9p -o trans=virtio,access=client host_media /mnt/media` in guest. |
+
 ### Server load settings
 
 | Important options | Default | Description |
@@ -124,14 +142,14 @@ CipherString = DEFAULT@SECLEVEL=1
 
 ### Adding virtual machines
 
-Place any ISO, QCOW2, VDI, VMDK virtual machine file in the `html/desktop/machines` 
+Place any ISO, QCOW2, VDI, VMDK, RAW virtual machine file in the `html/desktop/machines` 
 directory either local in the repo for testing, or in the HTML server e.g. at
 `/var/www/html/desktop/machines`.
 
 ```bash
 ls html/desktop/machines
 
-dsl.iso   machine1.iso ...
+dsl.iso    slax.iso    machine1.iso ...
 ```
 
 Then edit the `html/desktop/index.html` web page in the:
@@ -140,23 +158,22 @@ Then edit the `html/desktop/index.html` web page in the:
 and add entries to reflect the VM files in `html/machines`:
 ```html
 <select id="machine" name="machine">
+  <option value="slax.iso">Slax (Debian)</option>
   <option value="dsl.iso">Damn Small Linux</option>
+  ...
   <option value="machine1.iso">My superb VM</option>
   ...
 </select>
 ```
 
-:+1: This project provides a minimal ISO for testing (in `html/desktop/machines`):
-- [Damn Small Linux aka DSL](http://www.damnsmalllinux.org/)
-
-DSL does not properly work with modern systems. Expect strange behaviours with 
-the mouse and keyboard. Use the `std` video driver or `--qemu_video=std` option, 
-as proposed in the local test below.
+:+1: This project provides minimal ISO's for testing (in `html/desktop/machines`):
+- [Slax](https://www.slax.org/) a modern, yet very compact Debian system (265 MB)
+- [DSL](http://www.damnsmalllinux.org/) a very compact, old-style Linux (50 MB)
 
 Usage: local (for testing)
 ==========================
 
-It is possible to test that all works by launching a Damn Small Linux distribution.
+It is possible to test that all works by launching a Slax distribution.
 
 ```bash
 cd remote-desktop/src
@@ -167,7 +184,7 @@ perl cgi-bin/desktop.pl --dir_service=html/desktop \
 
 A text is displayed (HTML format) in the terminal, which indicates a URL.
 
-Connect within a browser to the displayed IP, such as:
+Connect with a web browser to the displayed URL, such as:
 - http://localhost:38443/vnc.html?host=localhost&port=38443
 
 for this test (executed as a script), there is no token to secure the VNC, as it is local.
@@ -220,6 +237,8 @@ Connect within a browser to the displayed IP, such as:
 
 and enter the displayed token (to secure the VNC connection), such as:
 - 8nrnmcru
+
+When used as as web service, any authenticated user listed in the `user_admin` (in `desktop.pl` configuration section) will also be able to start the `[ADMIN]` entries to e.g. monitor the service (status, and lists all running sessions), and purge (kill) all running sessions (which also cleans-up all temporary files).
 
 Credits
 =======
