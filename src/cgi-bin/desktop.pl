@@ -139,6 +139,12 @@ $config{dir_cfg}                  = File::Spec->tmpdir();
 # full path to snapshots and temporary files, full path
 $config{dir_novnc}                = "$config{dir_service}/novnc";
 
+# set a list of mounts to export into VMs.
+# these are tested for existence before mounting. The QEMU mount_tag is set to 
+# the last word of mount path prepended with 'host_'.
+my @mounts = ('/mnt','/media');
+$config{dir_mounts} = [@mounts];
+
 # MACHINE DEFAULT SETTINGS -----------------------------------------------------
 
 # max session life time in sec. 1 day is 86400 s. Highly recommended.
@@ -155,7 +161,7 @@ $config{snapshot_alloc_mem}       = 4096.0;
 $config{snapshot_alloc_disk}      = 10.0;
 
 # default machine to run
-$config{machine}                  = 'dsl.iso';
+$config{machine}                  = 'slax.iso';
 
 # QEMU executable. Adapt to the architecture you run on.
 $config{qemu_exec}                = "qemu-system-x86_64";
@@ -267,8 +273,8 @@ $config{session_nb}               = 0;
 
 for(my $i = 0; $i < @ARGV; $i++) {
   $_ = $ARGV[$i];
-  if(/--help|-h$/) {
-    print STDERR "$0: launch a QEMU/KVM machine in a browser window.\n\n";
+  if(/--help|-h|--version|-v$/) {
+    print STDERR "$0: launch a QEMU/KVM machine in a browser window. Version $config{version}\n\n";
     print STDERR "Usage: $0 --option1=value1 ...\n\n";
     print STDERR "Valid options are:\n";
     foreach my $key (keys %config) {
@@ -528,7 +534,8 @@ for my $port (5900..6000) {
 }
 if (not defined($vnc_port)) {
   $error .= "Can not find a port for the display.\n";
-} 
+}
+$session{port_vnc} = $vnc_port;
 
 # ==============================================================================
 # DO the work
@@ -578,6 +585,20 @@ if (not $error) {
   } else {
     $cmd .= " -boot c";
   }
+  
+  # we add mounts using QEMU virt-9p, with tags 'host_<last_word>'
+  #   see https://wiki.qemu.org/Documentation/9psetup
+  # mounts are activated in the guest with:
+  #   mount -t 9p -o trans=virtio,access=client [mount tag] [mount point]
+  my @mounts = @{ $config{dir_mounts} };
+  for(my $i = 0; $i <= $#mounts; $i++) {
+    if (-d $mounts[$i]) { # mount must exist as a directory
+      my $tag = (split '/', $mounts[$i])[-1];
+      $cmd .= " -fsdev local,security_model=passthrough,id=fsdev$i,path=$mounts[$i] -device virtio-9p-pci,id=fs$i,fsdev=fsdev$i,mount_tag=host_$tag";
+    }
+  }
+  
+  # add QEMU internal VNC
   my $vnc_port_5900=$vnc_port-5900;
   $cmd .= " -vnc $session{qemuvnc_ip}:$vnc_port_5900";
   
