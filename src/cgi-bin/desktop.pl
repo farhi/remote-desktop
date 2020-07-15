@@ -576,10 +576,26 @@ my $proc_qemu  = ""; # REQUIRED killed at END
 if (not $error) {
   
   # common options for QEMU
-  my $cmd = "$config{qemu_exec}"
-    . " -hda $session{snapshot} -smp $session{cpu} -m $session{memory}"
+  my $cmd = "$config{qemu_exec} -smp $session{cpu} "
+    . " -name $session{name}:$session{machine}"
     . " -machine pc,accel=kvm -enable-kvm -cpu host"
-    . " -net user -net nic,model=ne2k_pci -vga $session{video}";
+    . " -m $session{memory} -device virtio-balloon"
+    . " -hda $session{snapshot} -device ich9-ahci,id=ahci"
+    . " -netdev user,id=mynet0 -device virtio-net,netdev=mynet0"
+    . " -vga $session{video}";
+    
+
+  # performance options: network 
+  #   see: https://elinux.org/images/3/3b/Kvm-network-performance.pdf
+  # should use virtio-net. e1000 is best among emulated devices
+  #   -netdev user,id=mynet0 -device virtio-net,netdev=mynet0
+  
+  # performance options: disk
+  #   -device ich9-ahci,id=ahci
+  
+  # performance options: memory
+  #   -device virtio-balloon (allows to only assign what is used by guests)
+      
   if ($session{machine} =~ /\.iso$/i) {
     $cmd .= " -boot d -cdrom $config{dir_machines}/$session{machine}";
   } else {
