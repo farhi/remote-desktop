@@ -129,6 +129,25 @@ in your browser, without any additional software for you to install.
     
     <div class="row">
       <div class="col-25">
+        <label for="gpu">Compute on GPU</label>
+      </div>
+      <div class="col-25">
+        <input type="checkbox" id="gpu" name="gpu" value="gpu">
+      </div>
+      <div class="col-50">
+        <small><i>You may request a physical <b>GPU</b> to e.g. run heavy computations. The tools and libraries you wish to use should have been designed to benefit from such devices with e.g. 
+        <a href="https://www.khronos.org/opencl/">OpenCL</a>, 
+        <a href="https://developer.nvidia.com/cuda-zone">CUDA</a>, 
+        <a href="https://www.openacc.org/">OpenACC</a>, 
+        <a href="https://rocmdocs.amd.com/en/latest/">ROCm/HIP</a>.
+        Do NOT request a GPU if you do not actually use it, as their number is limited.
+        An additional GPU is only used for computation, not for display.
+        </i></small>
+      </div>
+    </div>
+    
+    <div class="row">
+      <div class="col-25">
         <label for="terms" style="color:red">I agree with the Terms and Conditions</label>
       </div>
       <div class="col-25">

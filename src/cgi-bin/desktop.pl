@@ -142,8 +142,8 @@ $config{dir_novnc}                = "$config{dir_service}/novnc";
 # set a list of mounts to export into VMs.
 # these are tested for existence before mounting. The QEMU mount_tag is set to 
 # the last word of mount path prepended with 'host_'.
-my @mounts = ('/mnt','/media');
-$config{dir_mounts} = [@mounts];
+my @mounts                        = ('/mnt','/media');
+$config{dir_mounts}               = [@mounts];
 
 # MACHINE DEFAULT SETTINGS -----------------------------------------------------
 
@@ -168,6 +168,13 @@ $config{qemu_exec}                = "qemu-system-x86_64";
 
 # QEMU video driver, can be "qxl" or "vmware"
 $config{qemu_video}               = "qxl"; 
+
+# attached GPU (via vfio-pci). Only use video part, no audio.
+# NVIDIA is 10de: RTX2080 is :1e82; GT1030 is 1d01
+# following eample indicates two GT 1030 of PCI bus 4d and 4d.
+my @gpu_hardware                  = ('10de:1d01',     '10de:1d01');
+my @gpu_name                      = ('NVIDIA GT 1030','NVIDIA GT 1030');
+my @gpu_pci                       = ('4c:00.0',       '4d:00.0');
 
 # SERVICE CONTRAINTS -----------------------------------------------------------
 
@@ -339,7 +346,8 @@ $session{persistent}  = "";  # implies lower server load
 $session{cpu}         = $config{snapshot_alloc_cpu};  # cores
 $session{memory}      = $config{snapshot_alloc_mem};  # in MB
 $session{disk}        = $config{snapshot_alloc_disk}; # only for ISO
-$session{video}       = $config{qemu_video};
+$session{video}       = $config{qemu_video};          # driver to use
+$session{gpu}         = ""; # indicates GPU index in list when not empty
 
 $session{date}        = localtime();
 # see https://www.oreilly.com/library/view/perl-cookbook/1565922433/ch11s03.html#:~:text=To%20append%20a%20new%20value,values%20for%20the%20same%20key.
@@ -384,7 +392,7 @@ if ($session{server_name} =~ "::1") {
 $config{server_name} = $session{server_name};
 
 # check input arguments values (not 'password')
-for ('machine','persistent','user','cpu','memory','video') {
+for ('machine','persistent','user','cpu','memory','video','gpu') {
   my $val = $q->param($_);
   if (defined($val)) {
     if ( $val =~ /^([a-zA-Z0-9_.\-@]+)$/ ) {
@@ -398,7 +406,7 @@ for ('machine','persistent','user','cpu','memory','video') {
 my $cgi_undef = 0;
 # these are the "input" to collect from the HTML FORM.
 # count how many parameters are undef. All will when running as script.
-for ('machine','persistent','user','password','cpu','memory','video') {
+for ('machine','persistent','user','password','cpu','memory','video','gpu') {
   my $val = $q->param($_);
   if (defined($val)) {
     $session{$_} = $val;
@@ -578,7 +586,7 @@ if (not $error) {
   # common options for QEMU
   my $cmd = "$config{qemu_exec} -smp $session{cpu} "
     . " -name $session{name}:$session{machine}"
-    . " -machine pc,accel=kvm -enable-kvm -cpu host"
+    . " -machine pc,accel=kvm -enable-kvm -cpu host,kvm=off"
     . " -m $session{memory} -device virtio-balloon"
     . " -hda $session{snapshot} -device ich9-ahci,id=ahci"
     . " -netdev user,id=mynet0 -device virtio-net,netdev=mynet0"
@@ -840,7 +848,7 @@ sub session_save {
   my $json = JSON::encode_json(\%session);
   print $fh "$json\n";
   close $fh;
-}
+} # session_save
 
 # $session = session_load(\%config, $file): load session hash from JSON.
 #   return $session reference
@@ -867,7 +875,7 @@ sub session_load {
   close $fh;
   my $session = decode_json($json);
   return $session;
-}
+} # session_load
 
 # session_watch(\%config, $file): monitor json file and clean-up at end.
 sub session_watch {
@@ -1005,8 +1013,8 @@ sub service_monitor {
   my $total_memory_GB = totalmem() / 1024/1024/1024;
   
   # display a table with current info
-  $out .= "</ul><br><hr><br><h1>Current service status</h1><table  border='1'>\n";
-  $out .= "<tr><th>Server           </th><th>$config{server_name}</th></tr>\n";
+  $out .= "</ul><br><hr><br><h1>Current $config{service} service status</h1><table  border='1'>\n";
+  $out .= "<tr><th>Server           </th><th>$config{server_name} running '$config{service}' version $config{version}</th></tr>\n";
   $out .= "<tr><td>#CPU total       </td><td>$cpu_count</td></tr>\n";
   $out .= "<tr><td>#CPU used        </td><td>$cpu_load</td></tr>\n";
   $out .= "<tr><td>Load [0-1]       </td><td>$load</td></tr>\n";
@@ -1016,14 +1024,14 @@ sub service_monitor {
   $out .= "</table>\n";
   
   # build a table with a list of active sessions
-  # {name} {machine} {user} {date} {cpu} {mem} {url} {token} {PIDs}
+  # {name} {machine} {user} {date} {cpu} {mem} {persistent} {url} {token} {PIDs}
   my $dir     = $config{dir_snapshots};
   my $cfg     = $config{dir_cfg};
   my $service = $config{service};
   
   $out .= "<br><hr><br><h1>Current sessions [$config{session_nb}]</h1><table  border='1'>\n";
   $out .= "<tr><th>Start Date</th><th>Name</th><th>Machine</th><th>User</th>";
-  $out .= "<th>CPU </th><th>Memory</th><th>URL</th><th>Token</th>";
+  $out .= "<th>CPU </th><th>Memory</th><th>GPU</th><th>single/persist</th><th>URL</th><th>Token</th>";
   $out .= "<th>PID's </th></tr>\n";
   foreach my $snapshot (glob("$dir/$service"."_*")) {
     if (-d $snapshot) { # is a snapshot directory
@@ -1040,6 +1048,12 @@ sub service_monitor {
           $out .= "<td>$session{user}</td>";
           $out .= "<td>$session{cpu}</td>";
           $out .= "<td>$session{memory}</td>";
+          if ($session{gpu}) {
+            $out .= "<td>GPU</td>";
+          } else { $out .= "<td></td>"; }
+          if ($session{persistent}) {
+            $out .= "<td>persistent</td>";
+          } else { $out .= "<td>single</td>"; }
           $out .= "<td><a href='$session{url}'>URL</a></td>";
           $out .= "<td>$session{vnc_token}</td>";
           $out .= "<td>@pids</td>\n";
