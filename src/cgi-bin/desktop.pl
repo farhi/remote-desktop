@@ -556,7 +556,7 @@ if (defined($session{gpu}) and $session{gpu} =~ /yes|gpu|true|1/i) {
     }
   }
   if ($session{gpu}) {
-    $output .= "<li>$ok Assigned GPU at $pci.</li>\n";
+    $output .= "<li>$ok Assigned GPU at PCI $session{gpu}.</li>\n";
   } else {
     $error .= "Can not find a free GPU as requested. Try again without.\n";
   }
@@ -621,10 +621,16 @@ if (not $error) {
   # performance options: memory
   #   -device virtio-balloon (allows to only assign what is used by guests)
       
+  # handle ISO boot
   if ($session{machine} =~ /\.iso$/i) {
     $cmd .= " -boot d -cdrom $config{dir_machines}/$session{machine}";
   } else {
     $cmd .= " -boot c";
+  }
+  
+  # attach GPU on pre-assigned PCI
+  if ($session{gpu}) {
+    $cmd .= " -device vfio-pci,host=$session{gpu},multifunction=on,x-vga=on";
   }
   
   # we add mounts using QEMU virt-9p, with tags 'host_<last_word>'
