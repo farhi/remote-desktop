@@ -106,7 +106,7 @@ if (not $r or not $r->can("rflush")) {
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
 
-$config{version}                  = "20.06.23";  # year.month
+$config{version}                  = "20.09.08";  # year.month
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -169,11 +169,13 @@ $config{qemu_exec}                = "qemu-system-x86_64";
 # QEMU video driver, can be "qxl" or "vmware"
 $config{qemu_video}               = "qxl"; 
 
-# searched attached GPU (via vfio-pci). Only use video part, no audio.
-$config{gpu_model}             = ();
-$config{gpu_name}              = ();
-$config{gpu_pci}               = ();
-$config{gpu_used}              = ();
+# searched detached GPU (via vfio-pci). Only use video part, no audio.
+{
+  my ($device_pci, $device_model, $device_name) = pci_devices("lspci -nnk","vga","vfio");
+  $config{gpu_model}             = @$device_pci;
+  $config{gpu_name}              = @$device_model;
+  $config{gpu_pci}               = @$device_name;
+}
 
 # SERVICE CONTRAINTS -----------------------------------------------------------
 
@@ -346,7 +348,7 @@ $session{cpu}         = $config{snapshot_alloc_cpu};  # cores
 $session{memory}      = $config{snapshot_alloc_mem};  # in MB
 $session{disk}        = $config{snapshot_alloc_disk}; # only for ISO
 $session{video}       = $config{qemu_video};          # driver to use
-$session{gpu}         = ""; # indicates GPU index in list when not empty
+$session{gpu}         = ""; # indicates PCI GPU passthrough request when not empty
 
 $session{date}        = localtime();
 # see https://www.oreilly.com/library/view/perl-cookbook/1565922433/ch11s03.html#:~:text=To%20append%20a%20new%20value,values%20for%20the%20same%20key.
@@ -531,7 +533,7 @@ if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|tr
   $socket->close;
 }
 my $vnc_port = undef;
-# find a another free VNC port at qemuvnc_ip
+# find another free VNC port at qemuvnc_ip
 for my $port (5900..6000) {
   my $socket = IO::Socket::IP->new(PeerAddr => $session{qemuvnc_ip}, PeerPort => $port);
   if (not $socket) { 
@@ -543,6 +545,22 @@ if (not defined($vnc_port)) {
   $error .= "Can not find a port for the display.\n";
 }
 $session{port_vnc} = $vnc_port;
+
+# find a free GPU when requested
+if (defined($session{gpu}) and $session{gpu} =~ /yes|gpu|true|1/i) { 
+  # look for detached GPU PCI, and check if it is used by a running session
+  $session{gpu} = "";
+  foreach my $pci ($config{gpu_pci}) {
+    if (not $session{gpu} and not session_use_gpu(\%config, $pci)) {
+      $session{gpu} = $pci; # this is what we need to pass to qemu
+    }
+  }
+  if ($session{gpu}) {
+    $output .= "<li>$ok Assigned GPU at $pci.</li>\n";
+  } else {
+    $error .= "Can not find a free GPU as requested. Try again without.\n";
+  }
+}
 
 # ==============================================================================
 # DO the work
@@ -1050,7 +1068,7 @@ sub service_monitor {
           $out .= "<td>$session{cpu}</td>";
           $out .= "<td>$session{memory}</td>";
           if ($session{gpu}) {
-            $out .= "<td>GPU</td>";
+            $out .= "<td>$session{gpu}</td>";
           } else { $out .= "<td></td>"; }
           if ($session{persistent}) {
             $out .= "<td>persistent</td>";
@@ -1326,6 +1344,28 @@ sub session_check_ldap {
   return $res;
 
 } # session_check_ldap
+
+# session_use_gpu(\%config, $pci): return true if the given PCI is used by any running session
+sub session_use_gpu {
+  my $config_ref  = shift;
+  my $pci         = shift;
+
+  if (not $config_ref) { return 0; }
+  my %config      = %{ $config_ref };
+  my $cfg     = $config{dir_cfg};
+  
+  # scan JSON files
+  foreach my $json (glob("$cfg/*.json")) {
+    
+    # session exists, load JSON
+    my $session_ref = session_load(\%config, $json);
+    if ($session_ref) {
+      my %session = %{ $session_ref };
+      if ($session{gpu} =~ $pci) { return 1; } # PCI is used
+    }
+  }
+  return 0; # no session is using that PCI slot
+} # session_use_gpu
 
 # proc_getchildren($pid): return all children PID's from parent.
 # use: my @children = flatten(proc_getchildren($$));
