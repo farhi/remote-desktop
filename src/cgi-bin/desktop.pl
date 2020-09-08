@@ -172,9 +172,9 @@ $config{qemu_video}               = "qxl";
 # searched detached GPU (via vfio-pci). Only use video part, no audio.
 {
   my ($device_pci, $device_model, $device_name) = pci_devices("lspci -nnk","vga","vfio");
-  $config{gpu_model}             = @$device_pci;
-  $config{gpu_name}              = @$device_model;
-  $config{gpu_pci}               = @$device_name;
+  $config{gpu_model}             = [@$device_model];
+  $config{gpu_name}              = [@$device_name];
+  $config{gpu_pci}               = [@$device_pci];
 }
 
 # SERVICE CONTRAINTS -----------------------------------------------------------
@@ -550,7 +550,7 @@ $session{port_vnc} = $vnc_port;
 if (defined($session{gpu}) and $session{gpu} =~ /yes|gpu|true|1/i) { 
   # look for detached GPU PCI, and check if it is used by a running session
   $session{gpu} = "";
-  foreach my $pci ($config{gpu_pci}) {
+  foreach my $pci (@{ $config{gpu_pci} }) {
     if (not $session{gpu} and not session_use_gpu(\%config, $pci)) {
       $session{gpu} = $pci; # this is what we need to pass to qemu
     }
