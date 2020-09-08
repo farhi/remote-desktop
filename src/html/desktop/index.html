@@ -119,9 +119,9 @@ in your browser, without any additional software for you to install.
       </div>
       <div class="col-50">
         <small><i><b>Persistent</b> sessions allow to close your browser and reconnect later. 
-        You can also share the session with your colleagues.
+        You can also share the session (URL, token) with your colleagues.
         Persistent sessions are only accessible if you are a fully registered user.
-        <b>Non-persistent</b> sessions are mostly for testing, tutorials, etc but 
+        <b>Non-persistent</b> sessions are mostly for testing, tutorials, etc and 
         are not recommended for long term work as any connection loss will end the session.
         </i></small>
       </div>
@@ -135,13 +135,14 @@ in your browser, without any additional software for you to install.
         <input type="checkbox" id="gpu" name="gpu" value="gpu">
       </div>
       <div class="col-50">
-        <small><i>You may request a physical <b>GPU</b> to e.g. run heavy computations. The tools and libraries you wish to use should have been designed to benefit from such devices with e.g. 
+        <small><i>You may request a physical <b>GPU</b> to e.g. run heavy computations (not for display). 
+        The tools and libraries you wish to use should have been designed to benefit from such devices with e.g. 
         <a href="https://www.khronos.org/opencl/">OpenCL</a>, 
         <a href="https://developer.nvidia.com/cuda-zone">CUDA</a>, 
         <a href="https://www.openacc.org/">OpenACC</a>, 
         <a href="https://rocmdocs.amd.com/en/latest/">ROCm/HIP</a>.
         Do NOT request a GPU if you do not actually use it, as their number is limited.
-        An additional GPU is only used for computation, not for display.
+        In case no GPU is available, you shall need to request a new remote desktop withour GPU.
         </i></small>
       </div>
     </div>

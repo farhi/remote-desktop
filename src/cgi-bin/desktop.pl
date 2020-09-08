@@ -169,12 +169,11 @@ $config{qemu_exec}                = "qemu-system-x86_64";
 # QEMU video driver, can be "qxl" or "vmware"
 $config{qemu_video}               = "qxl"; 
 
-# attached GPU (via vfio-pci). Only use video part, no audio.
-# NVIDIA is 10de: RTX2080 is :1e82; GT1030 is 1d01
-# following eample indicates two GT 1030 of PCI bus 4d and 4d.
-my @gpu_hardware                  = ('10de:1d01',     '10de:1d01');
-my @gpu_name                      = ('NVIDIA GT 1030','NVIDIA GT 1030');
-my @gpu_pci                       = ('4c:00.0',       '4d:00.0');
+# searched attached GPU (via vfio-pci). Only use video part, no audio.
+$config{gpu_model}             = ();
+$config{gpu_name}              = ();
+$config{gpu_pci}               = ();
+$config{gpu_used}              = ();
 
 # SERVICE CONTRAINTS -----------------------------------------------------------
 
@@ -834,6 +833,7 @@ END {
 # - flatten
 # - proc_getchildren
 # - proc_running
+# - pci_devices
 
 # ==============================================================================
 
@@ -996,8 +996,9 @@ sub service_housekeeping {
   return ($err,$nb);
 } # service_housekeeping
 
-# service_monitor(\%config): present a list of running sessions as well as
+# service_monitor(\%config, $out): present a list of running sessions as well as
 #   the server usage and history.
+#   return appended string $out
 sub service_monitor {
   my $config_ref  = shift;
   my $out         = shift;
@@ -1066,7 +1067,7 @@ sub service_monitor {
   return $out;
 }
 
-# session_email(\%config, \%session, $output)
+# session_email(\%config, \%session, $output): send an email with URL and token
 sub session_email {
   my $config_ref  = shift;
   my $session_ref = shift;
@@ -1369,3 +1370,49 @@ sub proc_running {
   return $found;
 } # proc_running
 
+# pci_devices($cmd,$type,$module): extract GPU info from lspci and identify the devices
+#   input:  $cmd    command to execute, e.g. 'lspci -nnk'
+#           $type   type of devive,     e.g. "vga" or empty (can be any word to search for)
+#           $module used kernel module, e.g. "nvidia" or "vfio" or empty
+#   output: list of devices matching criteria, (@$device_pci, @$device_model, @$device_name)
+#
+# example: my ($device_pci, $device_model, $device_name) = pci_devices("lspci -nnk","audio","");
+#          print "$_\n" for @$device_pci;
+# example: pci_devices("lspci -nnk","vga",  "vfio");
+sub pci_devices {
+  my $cmd    = shift;
+  my $type   = shift;
+  my $module = shift;
+
+  my $device_found = 0;
+  my @device_pci   = ();
+  my @device_model = ();
+  my @device_name  = ();
+  my ($pci, $device, $descr, $vendor, $model);
+  open(LSPCI , "$cmd|") or return (\@device_pci, \@device_model, \@device_name);
+  while (my $line = <LSPCI>) {
+    chomp $line;
+    # we first search the device syntax has XX:YY.Z descr: text [vendor:model] rest
+    if (! $device_found) {
+      ($pci, $device, $descr, $vendor, $model) = $line =~
+          m/(\S+)\s+ ([^:]+):\s+ ((?:(?!\s*\[\S+\:\S+\]).)+)\s* \[(\S+)\:(\S+)\] (.*)/x;
+      if (defined $pci and defined $vendor and defined $model) {
+        $device_found=1;
+      }
+    } else {
+      # now we search for the driver in use, not in a PCI address line
+      my ($before, $kernel) = split(':\s*', $line);
+      if ($before =~ /kernel/i) {
+        if ((not $module or $kernel =~ /$module/i) and $pci and (not $type or $device =~ /$type/i)) {
+          push @device_pci,   $pci;
+          push @device_model, "$vendor:$model";
+          push @device_name,  "$device $descr";
+          print "[$type $kernel] PCI=$pci hardware=$vendor:$model is '$descr'\n";
+        }
+        $device_found=0;
+      }
+    }
+  }
+  close(LSPCI);
+  return (\@device_pci, \@device_model, \@device_name);
+} # pci_devices
