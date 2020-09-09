@@ -95,37 +95,21 @@ in your browser, without any additional software for you to install.
       </div>
     </div>
     
-    <div class="row">
-      <div class="col-25">
-        <label for="video">Video driver</label>
-      </div>
-      <div class="col-75">
-        <select id="video" name="video">
-          <option value="qxl"   >Default  (QXL/SPICE, recommended)</option>
-          <option value="cirrus">Basic    (fail safe)       </option>
-          <option value="std"   >Standard (up to 1280x1024) </option>
-          <option value="vmware">VmWare   (SVGA, may fail)  </option>
-            <!-- vmware req. x11-drivers/xf86-video-vmware in VM -->
-        </select>
-      </div>
-    </div>
-    
-    <div class="row">
-      <div class="col-25">
-        <label for="persistent">Persistent</label>
-      </div>
-      <div class="col-25">
-        <input type="checkbox" id="persistent" name="persistent" value="persistent">
-      </div>
-      <div class="col-50">
-        <small><i><b>Persistent</b> sessions allow to close your browser and reconnect later. 
-        You can also share the session (URL, token) with your colleagues.
-        Persistent sessions are only accessible if you are a fully registered user.
-        <b>Non-persistent</b> sessions are mostly for testing, tutorials, etc and 
-        are not recommended for long term work as any connection loss will end the session.
-        </i></small>
-      </div>
-    </div>
+<!-- video driver: QXL. re-activate this section if you wish to select the QEMU video driver -->
+<!--    NOTE: vmware req. x11-drivers/xf86-video-vmware in VM -->
+<!--    <div class="row">-->
+<!--      <div class="col-25">-->
+<!--        <label for="video">Video driver</label>-->
+<!--      </div>-->
+<!--      <div class="col-75">-->
+<!--        <select id="video" name="video">-->
+<!--          <option value="qxl"   >Default  (QXL/SPICE, recommended)</option>-->
+<!--          <option value="cirrus">Basic    (fail safe)       </option>-->
+<!--          <option value="std"   >Standard (up to 1280x1024) </option>-->
+<!--          <option value="vmware">VmWare   (SVGA, may fail)  </option>-->
+<!--        </select>-->
+<!--      </div>-->
+<!--    </div>-->
     
     <div class="row">
       <div class="col-25">
@@ -143,6 +127,25 @@ in your browser, without any additional software for you to install.
         <a href="https://rocmdocs.amd.com/en/latest/">ROCm/HIP</a>.
         Do NOT request a GPU if you do not actually use it, as their number is limited.
         In case no GPU is available, you shall need to request a new remote desktop withour GPU.
+        </i></small>
+      </div>
+    </div>
+    
+    <hr>
+    
+    <div class="row">
+      <div class="col-25">
+        <label for="persistent">Persistent</label>
+      </div>
+      <div class="col-25">
+        <input type="checkbox" id="persistent" name="persistent" value="persistent">
+      </div>
+      <div class="col-50">
+        <small><i><b>Persistent</b> sessions allow to close your browser and reconnect later. 
+        You can also share the session (URL, token) with your colleagues.
+        Persistent sessions are only accessible if you are a fully registered user.
+        <b>Non-persistent</b> sessions are mostly for testing, tutorials, etc and 
+        are not recommended for long term work as any connection loss will end the session.
         </i></small>
       </div>
     </div>
@@ -180,7 +183,7 @@ Any registered user can use this service free of charge.
 Provide your user account name and password. 
 To access your account details or create such an account, go to our 
 <a href="https://sun.synchrotron-soleil.fr/sunset">SUNset</a> service.
-If you are not registered, just enter a valid email address below, without any password. You will only access single-shot session though.
+If you are not registered, just enter a valid email address below, without any password. You will only access single-shot session though. You may access our virtual machine files <a href="machines">here</a>.
 </p>
 <small>(c) 2020 
   <a href="http://www.synchrotron-soleil.fr" target="_top">SOLEIL</a> - 
