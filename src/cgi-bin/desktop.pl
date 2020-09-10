@@ -361,6 +361,7 @@ $session{pid_wait}    = $$;     # PID to wait for (daemon).
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
 if ($config{service_use_vnc_token}) {
+  no warnings "all";
   # cast a random token key for VNC: 8 random chars in [a-z A-Z digits]
   sub rndStr{ join'', @_[ map{ rand @_ } 1 .. shift ] };
   $session{vnc_token} = rndStr (8, 'a'..'z', 'A'..'Z', 0..9);
@@ -607,7 +608,7 @@ if (not $error) {
     . " -m $session{memory} -device virtio-balloon"
     . " -hda $session{snapshot} -device ich9-ahci,id=ahci"
     . " -netdev user,id=mynet0 -device virtio-net,netdev=mynet0"
-    . " -usedevice tablet"
+    . " -usbdevice tablet"
     . " -vga $session{video}";
     
 
@@ -861,6 +862,7 @@ END {
 # - pci_devices
 
 # ==============================================================================
+no warnings "all";
 
 # session_save(\%session): save session hash into a JSON.
 sub session_save {
