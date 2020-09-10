@@ -607,6 +607,7 @@ if (not $error) {
     . " -m $session{memory} -device virtio-balloon"
     . " -hda $session{snapshot} -device ich9-ahci,id=ahci"
     . " -netdev user,id=mynet0 -device virtio-net,netdev=mynet0"
+    . " -usedevice tablet"
     . " -vga $session{video}";
     
 
