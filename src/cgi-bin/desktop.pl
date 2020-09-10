@@ -356,7 +356,7 @@ $session{date}        = localtime();
 # push new PID: push @{ $session{pid} }, 1234;
 # get PIDs:     my @pid = @{ $session{pid} };
 $session{pid}         = ();     # we search all children in session_stop
-push @{ $session{pid} }, $$;    #   add our own PID
+# push @{ $session{pid} }, $$;    #   add our own PID
 $session{pid_wait}    = $$;     # PID to wait for (daemon).
 $session{port}        = 0;      # will be found automatically (6080)
 $session{qemuvnc_ip}  = "127.0.0.1";
