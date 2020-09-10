@@ -169,7 +169,7 @@ $config{qemu_exec}                = "qemu-system-x86_64";
 # QEMU video driver, can be "qxl" or "vmware"
 $config{qemu_video}               = "qxl"; 
 
-# searched detached GPU (via vfio-pci). Only use video part, no audio.
+# search detached GPU (via vfio-pci). Only use video part, no audio.
 {
   my ($device_pci, $device_model, $device_name) = pci_devices("lspci -nnk","vga","vfio");
   $config{gpu_model}             = [@$device_model];
@@ -394,7 +394,7 @@ if ($session{server_name} =~ "::1") {
 $config{server_name} = $session{server_name};
 
 # check input arguments values (not 'password')
-for ('machine','persistent','user','cpu','memory','video','gpu') {
+for ('machine','persistent','user','cpu','memory','video','gpu','session_stop') {
   my $val = $q->param($_);
   if (defined($val)) {
     if ( $val =~ /^([a-zA-Z0-9_.\-@]+)$/ ) {
@@ -408,7 +408,7 @@ for ('machine','persistent','user','cpu','memory','video','gpu') {
 my $cgi_undef = 0;
 # these are the "input" to collect from the HTML FORM.
 # count how many parameters are undef. All will when running as script.
-for ('machine','persistent','user','password','cpu','memory','video','gpu') {
+for ('machine','persistent','user','password','cpu','memory','video','gpu','session_stop') {
   my $val = $q->param($_);
   if (defined($val)) {
     $session{$_} = $val;
@@ -425,6 +425,20 @@ if ($cgi_undef > 4) {
   $config{check_user_with_ldap}   = 0;
   $config{check_user_with_imap}   = 0;
   $config{check_user_with_smtp}   = 0;
+}
+
+if ($session{session_stop}) {
+  # trigger session to end, and clean files/PIDs.
+  my $session_ref = session_load(\%config, $session{session_stop});
+  if ($session_ref) {
+    if ($session_ref == "all") {
+      session_stop($session_ref);
+    } else {
+      $config{snapshot_lifetime} = 1;
+      service_housekeeping(\%config);
+    }
+  }
+  exit;
 }
 
 # assemble welcome message -----------------------------------------------------
@@ -827,6 +841,7 @@ if (not $error and $proc_novnc and $proc_qemu) {
 
 # final clean-up in case of error. Inactivated to keep data for the watcher.
 END {
+  no warnings "all";
   session_stop(\%session);
 }
 
@@ -1084,7 +1099,8 @@ sub service_monitor {
           } else { $out .= "<td>single</td>"; }
           $out .= "<td><a href='$session{url}'>URL</a></td>";
           $out .= "<td>$session{vnc_token}</td>";
-          $out .= "<td>@pids</td>\n";
+          # create a STOP button for each
+          $out .= "<td>@pids <form action=\"/cgi-bin/desktop.pl\" method=post target=_blank enctype=\"multipart/form-data\"><input type=hidden name=session_stop value=\"$session{name}\"><input type=submit value=STOP></input></form></td>\n";
         }
       }
     }
