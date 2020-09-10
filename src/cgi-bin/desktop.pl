@@ -630,7 +630,7 @@ if (not $error) {
   
   # attach GPU on pre-assigned PCI
   if ($session{gpu}) {
-    $cmd .= " -device vfio-pci,host=$session{gpu},multifunction=on,x-vga=on";
+    $cmd .= " -device vfio-pci,host=$session{gpu},multifunction=on";
   }
   
   # we add mounts using QEMU virt-9p, with tags 'host_<last_word>'
@@ -1453,7 +1453,7 @@ sub pci_devices {
           push @device_pci,   $pci;
           push @device_model, "$vendor:$model";
           push @device_name,  "$device $descr";
-          print "[$type $kernel] PCI=$pci hardware=$vendor:$model is '$descr'\n";
+          # print "[$type $kernel] PCI=$pci hardware=$vendor:$model is '$descr'\n";
         }
         $device_found=0;
       }
