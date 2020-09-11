@@ -106,7 +106,7 @@ if (not $r or not $r->can("rflush")) {
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
 
-$config{version}                  = "20.09.08";  # year.month
+$config{version}                  = "20.09.10";  # year.month.day
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -427,20 +427,6 @@ if ($cgi_undef > 4) {
   $config{check_user_with_smtp}   = 0;
 }
 
-if ($session{session_stop}) {
-  # trigger session to end, and clean files/PIDs.
-  my $session_ref = session_load(\%config, $session{session_stop});
-  if ($session_ref) {
-    if ($session_ref == "all") {
-      session_stop($session_ref);
-    } else {
-      $config{snapshot_lifetime} = 1;
-      service_housekeeping(\%config);
-    }
-  }
-  exit;
-}
-
 # assemble welcome message -----------------------------------------------------
 my $ok   = '<font color=green>[OK]</font>';
 
@@ -466,6 +452,19 @@ END_HTML
 # $output .= "<li>$ok Starting on $session{date}</li>\n";
 # $output .= "<li>$ok The server name is $session{server_name}.</li>\n";
 # $output .= "<li>$ok You are accessing this service from $session{remote_host}.</li>\n";
+
+# stop/purge sessions from FORM (not args) - authentication is not needed as it was checked via form
+if ($session{session_stop}) {
+  # trigger session to end, and clean files/PIDs.
+  my $session_ref = session_load(\%config, $session{session_stop});
+  if ($session_ref) {
+    session_stop($session_ref);
+  }
+  print "Content-type:text/html\r\n\r\n";
+  print "$output\n\n";
+  print "OK Stopped $session{session_stop}\n";
+  exit;
+}
 
 
 # service monitoring requires user authentication
@@ -1056,7 +1055,7 @@ sub service_monitor {
   my $total_memory_GB = totalmem() / 1024/1024/1024;
   
   # display a table with current info
-  $out .= "</ul><br><hr><br><h1>Current $config{service} service status</h1><table  border='1'>\n";
+  $out .= "</ul><br><br><h1>Current $config{service} service status</h1><table  border='1'>\n";
   $out .= "<tr><th>Server           </th><th>$config{server_name} running '$config{service}' version $config{version}</th></tr>\n";
   $out .= "<tr><td>#CPU total       </td><td>$cpu_count</td></tr>\n";
   $out .= "<tr><td>#CPU used        </td><td>$cpu_load</td></tr>\n";
@@ -1100,7 +1099,7 @@ sub service_monitor {
           $out .= "<td><a href='$session{url}'>URL</a></td>";
           $out .= "<td>$session{vnc_token}</td>";
           # create a STOP button for each
-          $out .= "<td>@pids <form action=\"/cgi-bin/desktop.pl\" method=post target=_blank enctype=\"multipart/form-data\"><input type=hidden name=session_stop value=\"$session{name}\"><input type=submit value=STOP></input></form></td>\n";
+          $out .= "<td>@pids <form action=\"/cgi-bin/desktop.pl\" method=post target=_blank><input type=hidden name=session_stop value=\"$session{name}\"><input type=submit value=STOP></input></form></td>\n";
         }
       }
     }
