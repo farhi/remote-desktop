@@ -314,10 +314,12 @@ GRUB_CMDLINE_LINUX_DEFAULT = "quiet amd_iommu=on iommu=pt vfio-pci.ids=10de:1d01
 ```
 This information should also be added as a `modprobe` option. Create for instance the file `/etc/modprobe.d/vfio.conf` with content:
 ```bash
+# /etc/modprobe.d/vfio.conf
 options vfio-pci ids=10de:1d01,10de:0fb8 disable_vga=1
 ```
 and push necessary modules into the kernel by adding:
 ```
+# /etc/initramfs-tools/modules
 vfio
 vfio_iommu_type1
 vfio_pci
@@ -336,6 +338,35 @@ After reboot, the command `lspci -nnk` will show the detached cards as used by t
 
 :warning: all identical GPU of that model (`10de:1d01`) are detached. It is not possible to keep one on the server, and send the other same model to the VM. This is why at least two different GPU models are physically needed in the computer.
 
+It is now necessary to configure the system so that the apache user can launche qemu with IOMMU/VFIO passthrough.
+Change VFIO access rules so that group `kvm` can use it. Add in file `/etc/udev/rules.d/10-qemu-hw-users.rules`:
+```
+# /etc/udev/rules.d/10-qemu-hw-users.rules
+SUBSYSTEM=="vfio", OWNER="root", GROUP="kvm"
+```
+then restart `udev`
+```bash
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+Adapt the memory pre-allocation for the GPU. This is done in `/etc/security/limits.conf` by adding lines at the end:
+```
+# /etc/security/limits.conf
+*    soft memlock 20000000
+*    hard memlock 20000000
+@kvm soft memlock unlimited
+@kvm hard memlock unlimited
+```
+The value is given in Kb, here 20 GB for all users, and unlimited for group `kvm`. Perhaps this 20 GB value should match the internal GPU memory.
+
+Do something similar when Apache starts with SystemD e.g. in `/etc/systemd/system/multi-user.target.wants/apache2.service`
+```
+# /etc/systemd/system/multi-user.target.wants/apache2.service
+[Service]
+...
+LimitMEMLOCK=infinity
+```
+
 ## How it works
 
 A static HTML page with an attached style sheet (handling responsive design), calls a perl CGI on the Apache server. This CGI creates a snapshot of the selected virtual machine (so that local changes by the user do not affect the master VM files). A `qemu` command line is assembled, typically (here 4 SMP cores and 8 GB memory):
@@ -353,5 +384,27 @@ The perl CGI script that does all the job fits in only 1500 lines.
 ## Credits
 
 (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
+
+We have benefited from web resources.
+#### Debian/Ubuntu documentation
+
+- https://doc.ubuntu-fr.org/vfio (in French)
+- https://alpha.lordran.net/posts/2018/05/12/vfio/ (in French)
+- https://passthroughpo.st/gpu-debian/
+- https://wiki.debian.org/VGAPassthrough
+- https://davidyat.es/2016/09/08/gpu-passthrough/
+- https://heiko-sieger.info/low-end-kvm-virtual-machine/
+
+#### Other documentation
+
+- https://mathiashueber.com/windows-virtual-machine-gpu-passthrough-ubuntu/
+- https://wiki.archlinux.org/index.php/PCI_passthrough_via_OVMF
+- https://neg-serg.github.io/2017/06/pci-pass/ (ARCH linux)
+- https://wiki.gentoo.org/wiki/GPU_passthrough_with_libvirt_qemu_kvm (Gentoo)
+- https://medium.com/@calerogers/gpu-virtualization-with-kvm-qemu-63ca98a6a172
+
+### VirtualBox documentation
+
+    https://docs.oracle.com/en/virtualization/virtualbox/6.0/admin/pcipassthrough.html
 
 
