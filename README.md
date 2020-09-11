@@ -40,6 +40,7 @@ Features
 - The rendering of the web service is responsive design. It adapts to the browser window size.
 - Can monitor running sessions.
 - Can mount host volumes.
+- Can optionally assign physical GPU to sessions (see below).
 
 Installation
 ============
@@ -54,6 +55,8 @@ sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cp
 Then make sure all is set-up:
 ```bash
 sudo adduser www-data kvm
+sudo adduser www-data libvirt
+sudo adduser www-data libvirt-qemu
 sudo chmod 755 /etc/qemu-ifup
 ```
 
@@ -81,6 +84,8 @@ sudo service apache2 restart
 ```
 
 The noVNC (1.1.0) and websockify packages are included within this project.
+
+The installation steps for GPU passthrough are described at the end of this documentation.
 
 Customize to your needs
 =======================
@@ -128,7 +133,7 @@ It is possible to activate more than one authentication mechanism, which are tes
 | `check_user_with_smtp` | 0 | When set, the user ID/password is checked against specified SMTP server |
 | `check_user_with_ldap` | 0 | When set, the user ID/password is checked against specified LDAP server |
 
-:warning: The SSL encryption of the IMAP server (for user credentials) should match that of the server running the remote desktop service. 
+:warning: The SSL encryption level of the IMAP server (for user credentials) should match that of the server running the remote desktop service. 
 The current Debian rules are to use SSL v1.2 or v1.3. In case the user IMAP authentication brings errors such as:
 ```
 IMAP error "Unable to connect to <server>: SSL connect attempt failed error:1425F102:SSL routines:ssl_choose_client_version:unsupported protocol."
@@ -138,6 +143,33 @@ which appears in the Apache2 error log (`/var/log/apache2/error.log`), then you 
 [system_default_sect]
 MinProtocol = TLSv1
 CipherString = DEFAULT@SECLEVEL=1
+```
+
+### Creating virtual machines
+
+It is possible to create a VM from an ISO, just like you would boot physically. An empty disk is first created (here with size 10GB).
+```bash
+qemu-img create -f qcow2 machine1.qcow2 10G
+```
+Then you should boot from an ISO file (here indicated as `file.iso`)
+```bash
+qemu-system-x86_64  -m 4096 -smp 4 -hda machine1.qcow2 -name MySuperbVM -boot d -cdrom file.iso -enable-kvm -cpu host -vga qxl -net user -net nic,model=ne2k_pci
+```
+and install the system on the prepared disk. 
+
+You may also convert an existing VDI/VMDK file (VirtualBox and VMWare formats - here `file.vmdk`) into QCOW2 for QEMU (here machine1.qcow2`) with command:
+```bash
+qemu-img convert -f vmdk -O qcow2 file.vmdk machine1.qcow2
+```
+
+Last, you may dump an existing physical disk (with a functional system - here from device `dev/sda`) into a QCOW2 format:
+```bash
+qemu-img convert -o qcow2 /dev/sda machine1.qcow2
+```
+
+The QCOW2 format allows to resize disks, forinstance with:
+```bash
+qemu-img resize machine1.qcow2 +50G
 ```
 
 ### Adding virtual machines
@@ -169,6 +201,11 @@ and add entries to reflect the VM files in `html/machines`:
 :+1: This project provides minimal ISO's for testing (in `html/desktop/machines`):
 - [Slax](https://www.slax.org/) a modern, yet very compact Debian system (265 MB)
 - [DSL](http://www.damnsmalllinux.org/) a very compact, old-style Linux (50 MB)
+
+There exist some virtual machine repositories, for instance:
+- https://marketplace.opennebula.systems/appliance
+- https://github.com/palmercluff/qemu-images
+- https://www.osboxes.org
 
 Usage: local (for testing)
 ==========================
@@ -239,6 +276,77 @@ and enter the displayed token (to secure the VNC connection), such as:
 - 8nrnmcru
 
 When used as as web service, any authenticated user listed in the `user_admin` (in `desktop.pl` configuration section) will also be able to start the `[ADMIN]` entries to e.g. monitor the service (status, and lists all running sessions), and purge (kill) all running sessions (which also cleans-up all temporary files).
+
+Installation: GPU passthrough
+=============================
+It is possible, as an experimental feature, to use a physical GPU into virtual machine sessions. 
+
+:warning: This GPU is exclusively attached to the virtual machine, and can not anymore be used on the server for display. This implies that you should have at least two distinct GPU's (of different model).
+
+In the following, we have assume we have a server with an AMD CPU, and NVIDIA GPU's, all running on a Debian 10 "buster" system. The first step is to ensure that your server can detach a GPU from the host system. The feature which is used is called IOMMU/VFIO.
+```
+$ sudo dmesg | grep "AMD-Vi\|Intel VT-d"
+[    1.059323] AMD-Vi: IOMMU performance counters supported
+$ lscpu | grep -i "Virtualisation"
+Virtualisation :                        AMD-V
+$ egrep -q '^flags.*(svm|vmx)' /proc/cpuinfo && echo virtualization extensions available
+virtualization extensions available
+$ lspci -nnv | grep "VGA\|Audio\|Kernel driver in use: snd_hda_intel\|Kernel driver in use: nouveau\|Kernel driver in use: nvidia\|Kernel driver in use: nouveaufb\|Kernel driver in use: radeon"
+4c:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP108 [10de:1d01] (rev a1) (prog-if 00 [VGA controller])
+    Kernel driver in use: nvidia
+4c:00.1 Audio device [0403]: NVIDIA Corporation GP108 High Definition Audio Controller [10de:0fb8] (rev a1)
+    Subsystem: ASUSTeK Computer Inc. GP108 High Definition Audio Controller [1043:8746]
+    Kernel driver in use: snd_hda_intel
+4d:00.0 VGA compatible controller [0300]: NVIDIA Corporation GP108 [10de:1d01] (rev a1) (prog-if 00 [VGA controller])
+    Kernel driver in use: nvidia
+4d:00.1 Audio device [0403]: NVIDIA Corporation GP108 High Definition Audio Controller [10de:0fb8] (rev a1)
+    Subsystem: ASUSTeK Computer Inc. GP108 High Definition Audio Controller [1043:8621]
+    Kernel driver in use: snd_hda_intel
+```
+which results in a list of available GPU. In the following, we assume we have two low-cost/power NVIDIA GT 1030 (384 cores, 2 GB memory) cards, on PCI addresses `4c:00` and `4d:00`. It is important to also take note of the hardware vendor:model code for the GPU, here `10de:1d01`.
+
+In the following step, we detach these GT 1030 cards at boot. In the `/etc/default/grub` file activate IOMMU, and flag the vendor:model codes (here with video and sound parts - multiple cards are possible separated with comas):
+```
+GRUB_CMDLINE_LINUX_DEFAULT = "quiet amd_iommu=on iommu=pt vfio-pci.ids=10de:1d01,10de:0fb8"
+```
+This information should also be added as a `modprobe` option. Create for instance the file `/etc/modprobe.d/vfio.conf` with content:
+```bash
+options vfio-pci ids=10de:1d01,10de:0fb8 disable_vga=1
+```
+and push necessary modules into the kernel by adding:
+```
+vfio
+vfio_iommu_type1
+vfio_pci
+vfio_virqfd
+vhost-netdev
+```
+into file `/etc/initramfs-tools/modules`.
+
+Finally reconfigure the boot and linux kernel, and restart the server:
+```bash
+sudo update-initramfs -u
+sudo update-grub
+sudo reboot
+```
+After reboot, the command `lspci -nnk` will show the detached cards as used by the `vfio-pci` kernel driver.
+
+:warning: all identical GPU of that model (`10de:1d01`) are detached. It is not possible to keep one on the server, and send the other same model to the VM. This is why at least two different GPU models are physically needed in the computer.
+
+How it works
+============
+
+A static HTML page with an attached style sheet (handling responsive design), calls a perl CGI on the Apache server. This CGI creates a snapshot of the selected virtual machine (so that local changes by the user do not affect the master VM files). A `qemu` command line is assembled, typically (here 4 SMP cores and 8 GB memory):
+```bash
+qemu-system-x86_64  -m 8192 -smp 4 -hda machine1-snapshot.qcow2 -device ich9-ahci,id=ahci -enable-kvm -cpu host -vga qxl -netdev user,id=mynet0 -device virtio-net,netdev=mynet0 -device virtio-balloon
+```
+The integrated QEMU VNC server is also launched, so that we can access the VM display. As indicated, we also use the `virtio-balloon` device, which allows to share the unused memory when multiple VM's are launched. When IOMMU/VFIO GPU are available, their PCI slot is passed to QEMU with the `virtio-pci` option.
+
+A websocket is attached to the QEMU VNC, and redirected to a noVNC port, so that we can display the VM screen in a browser.
+
+A monitoring page is also handled by the CGI script, to display the server load and running sessions. These can be killed one-by-one, or all at once.
+
+The perl CGI script that does all the job fits in only 1500 lines.
 
 Credits
 =======
