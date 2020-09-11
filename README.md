@@ -11,8 +11,7 @@ A remote desktop service that launches virtual machines and displays them in you
 
 
 <a name=provided />
-What is provided by this service
-================================
+## What is provided by this service
 
 The service allows authorized users to launch a remote virtual machine, and display it in a browser window. No additional software installation is needed on the client side. This project has been developed on a Debian-class system, and is thus suited for it.
 
