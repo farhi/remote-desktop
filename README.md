@@ -4,7 +4,7 @@ A remote desktop service that launches virtual machines and displays them in you
 ##### Table of Contents
 - [What is provided by this service](#what-is-provided-by-this-service)
 - [Installation](#installation)
-- [Installation with GPU](#installation_gpu)
+- [Installation with GPU](#installation-gpu-passthrough)
 - [Configuration](#customize-to-your-needs)
 - [Usage](#usage-local-for-testing)
 - [How it works](#how-it-works)
