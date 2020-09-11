@@ -1,6 +1,15 @@
 # remote-desktop
-A remote desktop service that launches virtual machines and displays them in your browser
+A remote desktop service that launches virtual machines and displays them in your browser.
 
+##### Table of Contents
+- [What is provided by this service](#provided)
+- [Installation](#installation)
+- [Installation with GPU](#installation_gpu)
+- [Configuration](#customize)
+- [Usage](#usage)
+
+
+<a href=provided />
 What is provided by this service
 ================================
 
@@ -42,6 +51,7 @@ Features
 - Can mount host volumes.
 - Can optionally assign physical GPU to sessions (see below).
 
+<a name=installation />
 Installation
 ============
 
@@ -87,6 +97,7 @@ The noVNC (1.1.0) and websockify packages are included within this project.
 
 The installation steps for GPU passthrough are described at the end of this documentation.
 
+<a name=customize />
 Customize to your needs
 =======================
 
@@ -207,6 +218,7 @@ There exist some virtual machine repositories, for instance:
 - https://github.com/palmercluff/qemu-images
 - https://www.osboxes.org
 
+<a name=usage />
 Usage: local (for testing)
 ==========================
 
@@ -277,6 +289,7 @@ and enter the displayed token (to secure the VNC connection), such as:
 
 When used as as web service, any authenticated user listed in the `user_admin` (in `desktop.pl` configuration section) will also be able to start the `[ADMIN]` entries to e.g. monitor the service (status, and lists all running sessions), and purge (kill) all running sessions (which also cleans-up all temporary files).
 
+<a name=installation_gpu />
 Installation: GPU passthrough
 =============================
 It is possible, as an experimental feature, to use a physical GPU into virtual machine sessions. 
