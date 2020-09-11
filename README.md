@@ -2,12 +2,12 @@
 A remote desktop service that launches virtual machines and displays them in your browser.
 
 ##### Table of Contents
-- [What is provided by this service](#provided)
+- [What is provided by this service](#what-is-provided-by-this-service)
 - [Installation](#installation)
 - [Installation with GPU](#installation_gpu)
-- [Configuration](#customize)
-- [Usage](#usage-as-a-web-service)
-- [How it works](#how)
+- [Configuration](#customize-to-your-needs)
+- [Usage](#usage-local-for-testing)
+- [How it works](#how-it-works)
 
 ## What is provided by this service
 
