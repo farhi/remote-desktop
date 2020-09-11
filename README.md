@@ -7,6 +7,7 @@ A remote desktop service that launches virtual machines and displays them in you
 - [Installation with GPU](#installation_gpu)
 - [Configuration](#customize)
 - [Usage](#usage)
+- [How it works](#how)
 
 
 <a name=provided />
@@ -52,8 +53,7 @@ Features
 - Can optionally assign physical GPU to sessions (see below).
 
 <a name=installation />
-Installation
-============
+## Installation
 
 Install required packages. On a Debian-class system:
 ```bash
@@ -98,8 +98,8 @@ The noVNC (1.1.0) and websockify packages are included within this project.
 The installation steps for GPU passthrough are described at the end of this documentation.
 
 <a name=customize />
-Customize to your needs
-=======================
+## Customize to your needs
+
 
 Edit the `cgi-bin/desktop.pl` file, and its **service configuration** section (at the beginning of the file):
 - adapt location of files (esp. directories to `machines`,`snapshots`).
@@ -219,8 +219,7 @@ There exist some virtual machine repositories, for instance:
 - https://www.osboxes.org
 
 <a name=usage />
-Usage: local (for testing)
-==========================
+## Usage: local (for testing)
 
 It is possible to test that all works by launching a Slax distribution.
 
@@ -271,8 +270,7 @@ which generates an HTML and renders it in a browser.
 desktop.pl  ... --dir_snapshots=/tmp --dir_cfg=/tmp
 ```
 
-Usage: as a web service
-=======================
+## Usage: as a web service
 
 First make sure the service has been installed in the `html/desktop` root level of the host, and the `cgi-bin/desktop.pl` e.g. in the `/usr/lib/cgi-bin`.
 
@@ -290,8 +288,8 @@ and enter the displayed token (to secure the VNC connection), such as:
 When used as as web service, any authenticated user listed in the `user_admin` (in `desktop.pl` configuration section) will also be able to start the `[ADMIN]` entries to e.g. monitor the service (status, and lists all running sessions), and purge (kill) all running sessions (which also cleans-up all temporary files).
 
 <a name=installation_gpu />
-Installation: GPU passthrough
-=============================
+## Installation: GPU passthrough
+
 It is possible, as an experimental feature, to use a physical GPU into virtual machine sessions. 
 
 :warning: This GPU is exclusively attached to the virtual machine, and can not anymore be used on the server for display. This implies that you should have at least two distinct GPU's (of different model).
@@ -346,8 +344,8 @@ After reboot, the command `lspci -nnk` will show the detached cards as used by t
 
 :warning: all identical GPU of that model (`10de:1d01`) are detached. It is not possible to keep one on the server, and send the other same model to the VM. This is why at least two different GPU models are physically needed in the computer.
 
-How it works
-============
+<a name=how />
+## How it works
 
 A static HTML page with an attached style sheet (handling responsive design), calls a perl CGI on the Apache server. This CGI creates a snapshot of the selected virtual machine (so that local changes by the user do not affect the master VM files). A `qemu` command line is assembled, typically (here 4 SMP cores and 8 GB memory):
 ```bash
@@ -361,8 +359,8 @@ A monitoring page is also handled by the CGI script, to display the server load 
 
 The perl CGI script that does all the job fits in only 1500 lines.
 
-Credits
-=======
+## Credits
+
 (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
 
