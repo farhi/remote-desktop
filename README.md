@@ -202,6 +202,7 @@ and add entries to reflect the VM files in `html/machines`:
   ...
 </select>
 ```
+You can also remove unnecessary sections (e.g. video driver, GPU) at will. Defaults will then be used.
 
 :+1: This project provides minimal ISO's for testing (in `html/desktop/machines`):
 - [Slax](https://www.slax.org/) a modern, yet very compact Debian system (265 MB)
@@ -338,7 +339,10 @@ After reboot, the command `lspci -nnk` will show the detached cards as used by t
 
 :warning: all identical GPU of that model (`10de:1d01`) are detached. It is not possible to keep one on the server, and send the other same model to the VM. This is why at least two different GPU models are physically needed in the computer.
 
-It is now necessary to configure the system so that the apache user can launche qemu with IOMMU/VFIO passthrough.
+It is now necessary to configure the system so that the Apache user can launch qemu with IOMMU/VFIO passthrough. Else you get errors such as:
+
+`VFIO: ... permission denied`
+
 Change VFIO access rules so that group `kvm` can use it. Add in file `/etc/udev/rules.d/10-qemu-hw-users.rules`:
 ```
 # /etc/udev/rules.d/10-qemu-hw-users.rules
@@ -349,6 +353,18 @@ then restart `udev`
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
+
+You may experience in the Apache error.log messages like:
+```
+qemu-system-x86_64: -device vfio-pci,host=0000:4c:00.0,multifunction=on: VFIO_MAP_DMA: -12
+qemu-system-x86_64: -device vfio-pci,host=0000:4c:00.0,multifunction=on: vfio_dma_map(0x55966269d230, 0x100000, 0xbff00000, 0x7f55b7f00000) = -12 (Cannot allocate memory)
+```
+as well as:
+```
+vfio_pin_pages_remote: RLIMIT_MEMLOCK (65536) exceeded
+```
+is `dmesg` which is triggered by a low memory allocation threashold `ulimit`.
+
 Adapt the memory pre-allocation for the GPU. This is done in `/etc/security/limits.conf` by adding lines at the end:
 ```
 # /etc/security/limits.conf
