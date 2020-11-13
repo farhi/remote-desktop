@@ -91,7 +91,7 @@ sudo service apache2 restart
 
 The noVNC (1.1.0) and websockify packages are included within this project.
 
-The installation steps for GPU passthrough are described at the end of this documentation.
+The installation steps for GPU pass-through are described at the end of this documentation.
 
 ## Customize to your needs
 
@@ -126,6 +126,7 @@ These settings should be kept to their default for an Apache web server.
 | `service_max_instance_nb` | 10 | Maximum number of simultaneous sessions |
 | `service_allow_persistent` | 1 | You can disable persistent sessions, which use more resources |
 | `service_use_vnc_token` | 1 | You can disable VNC connection security here: no Token, direct access to the remote desktop |
+| `service_min_port` | 6000 | When 0, a random port in 0-65535 is found. When positive, a random port in [`service_min_port service_min_port+service_max_instance_nb`] is found. Recommended value is 6000. This option should be set if you plan to broadcast the service. Then it is better to restrict the port range. |
 
 ### User credential settings
 
@@ -172,7 +173,7 @@ Last, you may dump an existing physical disk (with a functional system - here fr
 qemu-img convert -o qcow2 /dev/sda machine1.qcow2
 ```
 
-The QCOW2 format allows to resize disks, forinstance with:
+The QCOW2 format allows to resize disks, for instance with:
 ```bash
 qemu-img resize machine1.qcow2 +50G
 ```
@@ -281,7 +282,7 @@ and enter the displayed token (to secure the VNC connection), such as:
 
 When used as as web service, any authenticated user listed in the `user_admin` (in `desktop.pl` configuration section) will also be able to start the `[ADMIN]` entries to e.g. monitor the service (status, and lists all running sessions), and purge (kill) all running sessions (which also cleans-up all temporary files).
 
-## Installation: GPU passthrough
+## Installation: GPU pass-through
 
 It is possible, as an experimental feature, to use a physical GPU into virtual machine sessions. 
 
@@ -339,7 +340,7 @@ After reboot, the command `lspci -nnk` will show the detached cards as used by t
 
 :warning: all identical GPU of that model (`10de:1d01`) are detached. It is not possible to keep one on the server, and send the other same model to the VM. This is why at least two different GPU models are physically needed in the computer.
 
-It is now necessary to configure the system so that the Apache user can launch qemu with IOMMU/VFIO passthrough. Else you get errors such as:
+It is now necessary to configure the system so that the Apache user can launch qemu with IOMMU/VFIO pass-through. Else you get errors such as:
 
 `VFIO: ... permission denied`
 
@@ -401,7 +402,10 @@ The perl CGI script that does all the job fits in only 1500 lines.
 
 (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
-We have benefited from web resources.
+    https://gitlab.com/soleil-data-treatment/remote-desktop
+
+We have benefited from the following web resources.
+
 #### Debian/Ubuntu documentation
 
 - https://doc.ubuntu-fr.org/vfio (in French)

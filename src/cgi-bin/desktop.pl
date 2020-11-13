@@ -4,9 +4,9 @@
 # to test this script, launch from the project root level something like:
 #
 #   cd remote-desktop
-#   perl src/cgi-bin/desktop.pl test --dir_service=src/html/desktop \
+#   perl src/cgi-bin/desktop.pl --dir_service=src/html/desktop \
 #     --dir_html=src/html --dir_snapshots=/tmp \
-#     --dir_machines=src/html/desktop/machines/ 
+#     --dir_machines=src/html/desktop/machines/  \
 #     --dir_novnc=$PWD/src/html/desktop/novnc/
 #
 # Then follow printed instructions in the terminal:
@@ -50,6 +50,7 @@
 #   libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl 
 #
 # (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
+# https://gitlab.com/soleil-data-treatment/remote-desktop
 
 
 
@@ -70,6 +71,7 @@ use File::Temp      qw/ tempdir tempfile /;
 use File::Path      qw/ rmtree  /;
 use File::Basename  qw(fileparse);
 use List::MoreUtils qw(uniq); # liblist-moreutils-perl
+use List::Util;
 use Sys::CPU;           # libsys-cpu-perl           for CPU::cpu_count
 use Sys::CpuLoad;       # libsys-cpuload-perl       for CpuLoad::load
 use JSON;               # libjson-perl              for JSON
@@ -106,7 +108,7 @@ if (not $r or not $r->can("rflush")) {
 # we use a Hash to store the configuration. This is simpler to pass to functions.
 my %config;
 
-$config{version}                  = "20.09.10";  # year.month.day
+$config{version}                  = "20.11.13";  # year.month.day
 
 # WHERE THINGS ARE -------------------------------------------------------------
 
@@ -189,6 +191,11 @@ $config{service_max_session_nb}   = 10;
 #   0: non-persistent (single-shot) are lighter for the server, but limited in use.
 #   1: persistent sessions can be re-used within life-time until shutdown.
 $config{service_allow_persistent} = 1;
+
+# when set (non 0), a reduced port range is used as 
+#   [service_min_port service_min_port+service_max_session_nb]
+# else (when 0) a random port is found in 0-65535
+$config{service_min_port}         = 6000;
 
 # USER AUTHENTICATION ----------------------------------------------------------
 
@@ -541,16 +548,32 @@ if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|tr
   $session{persistent} = "";
 }
 
-{ # find a free port for noVNC on server
+# find a free port for noVNC on server. This is what goes in the URL given to user.
+if ($config{service_min_port}) { 
+  # range [service_min_port service_min_port+service_max_session_nb]
+  my @novnc_list = List::Util::shuffle( $config{service_min_port} .. $config{service_min_port}+$config{service_max_session_nb} );
+  foreach my $port (@novnc_list) {
+    my $socket = IO::Socket::INET->new(Proto => 'tcp', 
+      LocalAddr => $session{qemuvnc_ip}, LocalPort => $port);
+    if ($socket) { # must have been created on server
+      $session{port} = $port;
+      $socket->close;
+      last;
+    }
+  }
+} else {
+  # request random port (0) to system in range [0 65535]
   my $socket = IO::Socket::INET->new(Proto => 'tcp', LocalAddr => $session{qemuvnc_ip});
   $session{port} = $socket->sockport();
   $socket->close;
 }
 my $vnc_port = undef;
-# find another free VNC port at qemuvnc_ip
-for my $port (5900..6000) {
-  my $socket = IO::Socket::IP->new(PeerAddr => $session{qemuvnc_ip}, PeerPort => $port);
-  if (not $socket) { 
+# find another free VNC port at qemuvnc_ip (client). Random in 5900 range + max_nb
+my @vnc_list = List::Util::shuffle( 5900 .. 5900+$config{service_max_session_nb} );
+for my $port (@vnc_list) {
+  my $socket = IO::Socket::IP->new(Proto => 'tcp',
+    PeerAddr => $session{qemuvnc_ip}, PeerPort => $port);
+  if (not $socket) { # must not exist yet on client
     $vnc_port = $port;
     last;
   } else { $socket->close; }
