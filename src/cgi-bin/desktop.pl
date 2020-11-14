@@ -551,7 +551,7 @@ if (defined($session{persistent}) and $session{persistent} =~ /yes|persistent|tr
 # find a free port for noVNC on server. This is what goes in the URL given to user.
 if ($config{service_min_port}) { 
   # range [service_min_port service_min_port+service_max_session_nb]
-  my @novnc_list = List::Util::shuffle( $config{service_min_port} .. $config{service_min_port}+$config{service_max_session_nb} );
+  my @novnc_list = List::Util::shuffle( $config{service_min_port} .. $config{service_min_port}+$config{service_max_session_nb}-1 );
   foreach my $port (@novnc_list) {
     my $socket = IO::Socket::INET->new(Proto => 'tcp', 
       LocalAddr => $session{qemuvnc_ip}, LocalPort => $port);
@@ -569,7 +569,7 @@ if ($config{service_min_port}) {
 }
 my $vnc_port = undef;
 # find another free VNC port at qemuvnc_ip (client). Random in 5900 range + max_nb
-my @vnc_list = List::Util::shuffle( 5900 .. 5900+$config{service_max_session_nb} );
+my @vnc_list = List::Util::shuffle( 5900 .. 5900+$config{service_max_session_nb}-1 );
 for my $port (@vnc_list) {
   my $socket = IO::Socket::IP->new(Proto => 'tcp',
     PeerAddr => $session{qemuvnc_ip}, PeerPort => $port);
