@@ -402,7 +402,7 @@ The perl CGI script that does all the job fits in only 1500 lines.
 
 (c) 2020 Emmanuel Farhi - GRADES - Synchrotron Soleil. AGPL3.
 
-    https://gitlab.com/soleil-data-treatment/remote-desktop
+- https://gitlab.com/soleil-data-treatment/soleil-software-projects/remote-desktop
 
 We have benefited from the following web resources.
 
