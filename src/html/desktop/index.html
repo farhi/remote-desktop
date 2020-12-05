@@ -14,9 +14,9 @@
           src="images/logo_soleil.png"
           align="left" border="0" height="64"></a>
           
-<img alt="virtualmachines" title="virtualmachines"
+<a href="https://gitlab.com/soleil-data-treatment/soleil-software-projects/remote-desktop" target="_top"><img alt="virtualmachines" title="virtualmachines"
         src="images/virtualmachines.png" 
-        align="right" height="128" width="173">
+        align="right" height="128" width="173"></a>
         
 <h1 align="center"><i>Freshly Cooked Remote Desktop</i></h1>
 
@@ -111,24 +111,25 @@ in your browser, without any additional software for you to install.
 <!--      </div>-->
 <!--    </div>-->
     
-    <div class="row">
-      <div class="col-25">
-        <label for="gpu">Compute on GPU</label>
-      </div>
-      <div class="col-25">
-        <input type="checkbox" id="gpu" name="gpu" value="gpu">
-      </div>
-      <div class="col-50">
-        <small><i>You may request a physical <b>GPU</b> to e.g. run heavy computations (not for display). 
-        The tools and libraries you wish to use should have been designed to benefit from such devices with e.g. 
-        <a href="https://www.khronos.org/opencl/">OpenCL</a>, 
-        <a href="https://developer.nvidia.com/cuda-zone">CUDA</a>, 
-        <a href="https://www.openacc.org/">OpenACC</a>, 
-        <a href="https://rocmdocs.amd.com/en/latest/">ROCm/HIP</a>.
-        Do NOT request a GPU if you do not actually use it, as their number is limited.
-        </i></small>
-      </div>
-    </div>
+<!-- GPU pass-through: activate if you have configured IOMMU/VFIO for GPU pass-through -->
+<!--    <div class="row">-->
+<!--      <div class="col-25">-->
+<!--        <label for="gpu">Compute on GPU</label>-->
+<!--      </div>-->
+<!--      <div class="col-25">-->
+<!--        <input type="checkbox" id="gpu" name="gpu" value="gpu">-->
+<!--      </div>-->
+<!--      <div class="col-50">-->
+<!--        <small><i>You may request a physical <b>GPU</b> to e.g. run heavy computations (not for display). -->
+<!--        The tools and libraries you wish to use should have been designed to benefit from such devices with e.g. -->
+<!--        <a href="https://www.khronos.org/opencl/">OpenCL</a>, -->
+<!--        <a href="https://developer.nvidia.com/cuda-zone">CUDA</a>, -->
+<!--        <a href="https://www.openacc.org/">OpenACC</a>, -->
+<!--        <a href="https://rocmdocs.amd.com/en/latest/">ROCm/HIP</a>.-->
+<!--        Do NOT request a GPU if you do not actually use it, as their number is limited.-->
+<!--        </i></small>-->
+<!--      </div>-->
+<!--    </div>-->
     
     <hr>
     
@@ -187,7 +188,8 @@ You may access our virtual machine files <a href="machines">here</a>.
 </p>
 <small>(c) 2020 
   <a href="http://www.synchrotron-soleil.fr" target="_top">SOLEIL</a> - 
-  <a href="mailto:emmanuel.farhi@synchrotron-soleil.fr">Emmanuel Farhi</a>
+  <a href="mailto:emmanuel.farhi@synchrotron-soleil.fr">Emmanuel Farhi</a> -
+  <a href="https://gitlab.com/soleil-data-treatment/soleil-software-projects/remote-desktop">source code at Gitlab</a>
 </small>
 
 </body>

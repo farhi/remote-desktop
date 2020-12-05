@@ -43,6 +43,7 @@
 # ============
 # sudo apt install apache2 libapache2-mod-perl2
 # sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
+# sudo apt install novnc websockify
 #
 # sudo apt install libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl \
 #   libcgi-pm-perl liblist-moreutils-perl libnet-dns-perl libjson-perl\
@@ -138,8 +139,11 @@ $config{dir_snapshots}            = "$config{dir_service}/snapshots";
 # which creates a '/tmp' in e.g. /tmp/systemd-private-*-apache2.service-*/
 $config{dir_cfg}                  = File::Spec->tmpdir(); 
 
-# full path to snapshots and temporary files, full path
-$config{dir_novnc}                = "$config{dir_service}/novnc";
+# full path to noVNC, e.g. "/usr/share/novnc". Must contain "vnc.html"
+$config{dir_novnc}                = "/usr/share/novnc";
+# websockify command, e.g. "/usr/bin/websockify"
+$config{dir_websockify}           = "websockify";
+
 
 # set a list of mounts to export into VMs.
 # these are tested for existence before mounting. The QEMU mount_tag is set to 
@@ -724,9 +728,10 @@ if (not $error) {
   # we set a timeout for 1st connection, to make sure the session does not block
   # resources. Also, by setting a log record to the snapshot, we can add the 
   # session name to the process command line. Used for parsing PIDs.
-  my $cmd = "$config{dir_novnc}/utils/websockify/run" .
+  my $cmd = "$config{dir_websockify}" .
     " --record=$session{dir_snapshot}/websocket.log" .
     " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
+    # " --web $config{dir_novnc} $session{port} $session{qemuvnc_ip}:$vnc_port";
   if (not $session{persistent}) { $cmd .= " --run-once"; }
 
   # $proc_novnc = system("echo '$cmd' | at now") || "";
@@ -805,11 +810,11 @@ END_HTML
     <li>The virtual machine is created on request, and not kept. 
       Your work <b>must be saved elsewhere</b> 
       (e.g. mounted disk, ssh/sftp, Dropbox, OwnCloud...).</li>
-    <li>We recommend that you adapt the <b>screen resolution</b> of the 
+    <li>You may adapt the <b>screen resolution</b> of the 
       virtual machine using the <i>Preferences/Monitor 
       Settings</i>.</li>
     <li>We recommend that you adapt the <b>keyboard layout</b> from the <i>Preferences</i>.</li>
-    <li>This is also true for the <b>login-page</b> which has a layout option in the top right corner once the session has started. </li>
+    <li>This is also true for any <b>login-page</b> which has a layout option in the top right corner once the session has started. </li>
     </ul></p>
     
     <hr>

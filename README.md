@@ -54,6 +54,7 @@ Features
 Install required packages. On a Debian-class system:
 ```bash
 sudo apt install apache2 libapache2-mod-perl2
+sudo apt install novnc websockify
 sudo apt install qemu-kvm bridge-utils qemu iptables dnsmasq
 sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cpuload-perl libsys-meminfo-perl libnet-dns-perl libproc-background-perl  libproc-processtable-perl libemail-valid-perl libnet-smtps-perl libmail-imapclient-perl libnet-ldap-perl libemail-valid-perl libjson-perl
 ```
@@ -61,18 +62,17 @@ sudo apt install libcgi-pm-perl liblist-moreutils-perl libsys-cpu-perl libsys-cp
 Then make sure all is set-up:
 ```bash
 sudo adduser www-data kvm
-sudo adduser www-data libvirt
-sudo adduser www-data libvirt-qemu
 sudo chmod 755 /etc/qemu-ifup
 ```
 
 - copy the html directory content into e.g. `/var/www/html` (Apache2 / Debian). You should now have a 'desktop' item there.
 - copy the cgi-bin directory content into e.g. `/usr/lib/cgi-bin` (Apache2 / Debian).
 
-The `cgi-bin` section of the Apache configuration file e.g. in `/etc/apache2/conf-available/serve-cgi-bin.conf` should be tuned as follows:
+The `cgi-bin` section of the Apache configuration file e.g. in `/etc/apache2/conf-available/serve-cgi-bin.conf` should be tuned as follows, adding at the end:
 ```
+# ...
 <Directory "/usr/lib/cgi-bin">
-  ...
+  # ...
   SetHandler perl-script
   PerlResponseHandler ModPerl::Registry
   PerlOptions +ParseHeaders
@@ -88,8 +88,6 @@ sudo chmod 755 /usr/lib/cgi-bin/desktop.pl
 sudo a2enmod cgi
 sudo service apache2 restart
 ```
-
-The noVNC (1.1.0) and websockify packages are included within this project.
 
 The installation steps for GPU pass-through are described at the end of this documentation.
 
@@ -114,7 +112,8 @@ These settings should be kept to their default for an Apache web server.
 | `dir_machines` | /var/www/html/desktop/machines | Full path to machines (ISO,VM) |
 | `dir_snapshots` | /var/www/html/desktop/snapshots | Where snapshot are stored |
 | `dir_cfg` | /tmp | Temporary files (JSON for sessions) |
-| `dir_novnc` | /var/www/html/desktop/novnc | Location of noVNC and websockify |
+| `dir_novnc` | /usr/share/novnc | Location of noVNC directory, must contain `vnc.html` |
+| `dir_websockify` | websockify | Location of Websockify executable |
 | `dir_mounts` | (/mnt,/media) | Volumes from host to mount in guests. Use e.g. `mount -t 9p -o trans=virtio,access=client host_media /mnt/media` in guest. |
 
 ### Server load settings
